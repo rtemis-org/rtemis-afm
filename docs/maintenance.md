@@ -115,13 +115,14 @@ reference for `TranscriptBuilder`; if Apple ever ships the forward direction
   latest release through the unauthenticated GitHub API and downloads
   release assets, which needs a **public** repository (as does free macOS
   CI). Make it public before the first release.
-- rtemislive's Help page says `brew install rtemis/tap/rtemis-afm`, which
-  would need a GitHub account named `rtemis`. The formula template and the
-  release workflow target `rtemis-org/homebrew-tap` (install line:
-  `brew install rtemis-org/tap/rtemis-afm`). Align one or the other.
+- The tap is `rtemis-org/homebrew-tap` (public; created 2026-09-15), install
+  line `brew install rtemis-org/tap/rtemis-afm`. It holds only a README until
+  the first release; the release workflow writes `Formula/rtemis-afm.rb`
+  and needs the `TAP_GITHUB_TOKEN` secret (fine-grained PAT, Contents:
+  write on the tap) to push there. After the first release, run
+  `brew audit --strict --online rtemis-org/tap/rtemis-afm` once.
 - `scripts/afm.sh` is the source; copy it to rtemislive's `public/afm.sh` on
-  every change (the Help page links to the deployed URL). The Help page
-  currently says "macOS 26 or later"; the bridge needs 27.
+  every change (the Help page links to the deployed URL).
 - Bump `Sources/RtemisAFM/Version.swift` and `CHANGELOG.md` before tagging;
   the release workflow refuses a tag that does not match the version constant.
 
