@@ -30,8 +30,6 @@ jobs:
     runs-on: xcode-27
     steps:
       - uses: actions/checkout@v5
-      - name: Select Xcode 27
-        run: sudo xcode-select -s /Applications/Xcode_27.app
 
       - name: Version from tag
         id: version
