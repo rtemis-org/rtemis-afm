@@ -14,10 +14,8 @@ import Logging
 /// the server decides how to render the events.
 ///
 /// **Future updates:** the whole file is written against the macOS 27.0 SDK
-/// (Xcode 27.0, September 2026). Places that depend on macOS 27 behavior are
-/// guarded with `#available(macOS 27, *)` and fall back to a poorer but
-/// working answer on macOS 26. Re-run `afm-spike` after OS/Xcode updates to
-/// confirm the assumptions listed in its README still hold.
+/// (Xcode 27.0, September 2026). Re-run `afm-spike` after OS/Xcode updates
+/// to confirm the assumptions listed in its README still hold.
 public final class FoundationModelsBackend: ChatBackend {
     private let model: SystemLanguageModel
     private let gate: GenerationGate
@@ -54,9 +52,7 @@ public final class FoundationModelsBackend: ChatBackend {
         return ModelStatus(
             available: reason == nil,
             unavailableReason: reason,
-            // `contextSize` is back-deployed to macOS 26 but only real on 27;
-            // before that it returns a conservative 4096. Measured against
-            // `fm serve` on macOS 27.0: 8192.
+            // 8192 on macOS 27.0 (`fm serve` agrees: 7.3k accepted, 10.9k refused).
             contextWindow: model.contextSize,
             capabilities: capabilities
         )
@@ -95,12 +91,10 @@ public final class FoundationModelsBackend: ChatBackend {
         }
 
         let session = LanguageModelSession(model: model, tools: prepared.tools, transcript: prepared.transcript)
-        if #available(macOS 27, *) {
-            // Keep the entries generated before an error. This is what lets
-            // the tool-call path read *every* call the model made out of
-            // `session.transcript` after `BridgeTool` throws.
-            session.transcriptErrorHandlingPolicy = .preserveTranscript
-        }
+        // Keep the entries generated before an error. This is what lets the
+        // tool-call path read *every* call the model made out of
+        // `session.transcript` after `BridgeTool` throws.
+        session.transcriptErrorHandlingPolicy = .preserveTranscript
 
         var producedText = ""
         var usage: Usage?
@@ -114,7 +108,7 @@ public final class FoundationModelsBackend: ChatBackend {
                 var final: GeneratedContent?
                 for try await snapshot in session.streamResponse(to: prepared.prompt, schema: schema, options: prepared.options) {
                     final = snapshot.rawContent
-                    if #available(macOS 27, *) { usage = Self.usage(from: snapshot.usage) }
+                    usage = Self.usage(from: snapshot.usage)
                 }
                 if let final {
                     producedText = final.jsonString
@@ -133,29 +127,30 @@ public final class FoundationModelsBackend: ChatBackend {
                         continuation.yield(.contentDelta(String(full.dropFirst(shared))))
                     }
                     producedText = full
-                    if #available(macOS 27, *) { usage = Self.usage(from: snapshot.usage) }
+                    usage = Self.usage(from: snapshot.usage)
                 }
             }
         } catch let error as LanguageModelSession.ToolCallError where error.underlyingError is ToolCallIntercepted {
             let intercepted = error.underlyingError as! ToolCallIntercepted
             let calls = toolCalls(from: session, fallback: intercepted)
             continuation.yield(.toolCalls(calls))
-            if #available(macOS 27, *) { usage = Self.usage(from: session.usage) }
-            continuation.yield(.finished(.toolCalls, usage ?? estimatedUsage(prepared, output: calls.map(\.function.arguments).joined())))
+            continuation.yield(.finished(.toolCalls, Self.usage(from: session.usage)))
             return
-        } catch let error as LanguageModelSession.GenerationError {
+        } catch let error as LanguageModelError {
             if case .refusal = error {
                 // OpenAI reports a refusal as a normal completion with
-                // `message.refusal` set and `content: null`.
+                // `message.refusal` set and `content: null`. (The framework
+                // can also produce an `explanation` by asking the model
+                // again; the error's own description is used instead to keep
+                // the request to one generation.)
                 continuation.yield(.refusal(ErrorMapper.describe(error)))
-                if #available(macOS 27, *) { usage = Self.usage(from: session.usage) }
-                continuation.yield(.finished(.stop, usage ?? estimatedUsage(prepared, output: "")))
+                continuation.yield(.finished(.stop, Self.usage(from: session.usage)))
                 return
             }
             throw error
         }
 
-        let finalUsage = usage ?? estimatedUsage(prepared, output: producedText)
+        let finalUsage = usage ?? Self.usage(from: session.usage)
         let reason: FinishReason
         if let cap = prepared.options.maximumResponseTokens, finalUsage.completionTokens >= cap {
             // The framework does not say why it stopped; hitting the cap is
@@ -171,23 +166,21 @@ public final class FoundationModelsBackend: ChatBackend {
 
     /// Every tool call the model made in the turn that just ended.
     ///
-    /// On macOS 27, with `.preserveTranscript`, the session's transcript keeps
-    /// the `.toolCalls` entry — with all calls, even when the model asked for
+    /// With `.preserveTranscript`, the session's transcript keeps the
+    /// `.toolCalls` entry — with all calls, even when the model asked for
     /// several at once (the first `BridgeTool` to throw ends the turn, but
-    /// the entry was written before any tool ran). On macOS 26 only the
-    /// intercepted call is known.
+    /// the entry was written before any tool ran). The intercepted call is
+    /// the fallback should the entry ever be missing.
     private func toolCalls(from session: LanguageModelSession, fallback: ToolCallIntercepted) -> [ToolCallOutput] {
-        if #available(macOS 27, *) {
-            for entry in session.transcript.reversed() {
-                if case .toolCalls(let calls) = entry, !calls.isEmpty {
-                    return calls.enumerated().map { index, call in
-                        ToolCallOutput(
-                            index: index,
-                            id: call.id.isEmpty ? makeToolCallID() : call.id,
-                            name: call.toolName,
-                            arguments: call.arguments.jsonString
-                        )
-                    }
+        for entry in session.transcript.reversed() {
+            if case .toolCalls(let calls) = entry, !calls.isEmpty {
+                return calls.enumerated().map { index, call in
+                    ToolCallOutput(
+                        index: index,
+                        id: call.id.isEmpty ? makeToolCallID() : call.id,
+                        name: call.toolName,
+                        arguments: call.arguments.jsonString
+                    )
                 }
             }
         }
@@ -196,19 +189,8 @@ public final class FoundationModelsBackend: ChatBackend {
 
     // MARK: - Usage
 
-    @available(macOS 27, *)
+    /// The framework's own accounting, straight onto the wire.
     private static func usage(from usage: LanguageModelSession.Usage) -> Usage {
         Usage(promptTokens: usage.input.totalTokenCount, completionTokens: usage.output.totalTokenCount)
-    }
-
-    /// macOS 26 has no token accounting on the response. Four characters per
-    /// token is the usual rough estimate for English text; it is labeled as
-    /// an estimate nowhere on the wire, so treat it as indicative only.
-    private func estimatedUsage(_ prepared: PreparedChat, output: String) -> Usage {
-        var promptChars = prepared.instructionsText.count + prepared.prompt.count
-        for entry in prepared.transcript {
-            promptChars += String(describing: entry).count
-        }
-        return Usage(promptTokens: promptChars / 4, completionTokens: output.count / 4)
     }
 }

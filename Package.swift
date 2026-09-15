@@ -19,18 +19,18 @@
 //                     Xcode update; see `Sources/afm-spike/README.md`.
 //
 // Compatibility note (September 2026): built and verified with Xcode 27.0 /
-// Swift 6.4 on macOS 27.0. The macOS 26 floor is kept per the spec, but
-// several APIs used here (token usage, `toolCallingMode`,
-// `transcriptErrorHandlingPolicy`, `LanguageModelError`) are macOS 27 only
-// and are guarded with `#available(macOS 27, *)` in the code.
+// Swift 6.4 on macOS 27.0. macOS 27 is the floor: the bridge relies on
+// APIs that first shipped there (token usage, `toolCallingMode`,
+// `transcriptErrorHandlingPolicy`, `LanguageModelError`, a real
+// `contextSize`), so there is no `#available` guarding anywhere.
 
 import PackageDescription
 
 let package = Package(
     name: "rtemis-afm",
-    // The on-device model exists only on Apple silicon Macs running macOS 26
-    // or later, so nothing below that is a meaningful target.
-    platforms: [.macOS(.v26)],
+    // The on-device model exists only on Apple silicon Macs; the APIs the
+    // bridge is built on exist only from macOS 27.
+    platforms: [.macOS("27.0")],
     products: [
         .executable(name: "rtemis-afm", targets: ["rtemis-afm"]),
         .library(name: "RtemisAFM", targets: ["RtemisAFM"]),

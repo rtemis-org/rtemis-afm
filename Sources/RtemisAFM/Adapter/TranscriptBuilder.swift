@@ -30,7 +30,7 @@ public enum TranscriptBuilder {
     public struct Built: Sendable {
         public var transcript: Transcript
         public var prompt: String
-        /// The instructions text, kept for token estimates on macOS 26.
+        /// The instructions text, as folded from the system messages.
         public var instructionsText: String
     }
 

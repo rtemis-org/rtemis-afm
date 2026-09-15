@@ -14,9 +14,10 @@ class RtemisAfm < Formula
   version "{{VERSION}}"
   license "BSD-3-Clause"
 
-  # Apple Intelligence exists only on Apple silicon, macOS 26 (Tahoe) or later.
+  # Apple silicon only, macOS 27 (Homebrew codename "Golden Gate") or later.
+  # In a formula, `depends_on macos:` is a minimum, not an exact match.
   depends_on arch: :arm64
-  depends_on macos: :tahoe
+  depends_on macos: :golden_gate
 
   def install
     bin.install "rtemis-afm"

@@ -34,7 +34,7 @@ public struct BridgeError: Error, Equatable, Sendable {
     }
 
     /// `400 unsupported` — well-formed, but asks for something this wire
-    /// cannot do (vision, a forced tool call on macOS 26, …).
+    /// cannot do (vision, an unknown `response_format`, …).
     public static func unsupported(_ message: String) -> BridgeError {
         BridgeError(status: 400, type: "invalid_request_error", code: "unsupported", message: message)
     }

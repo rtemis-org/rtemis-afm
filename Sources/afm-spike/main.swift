@@ -62,10 +62,8 @@ let os = ProcessInfo.processInfo.operatingSystemVersionString
 print("afm-spike for rtemis-afm \(RtemisAFM.version) — macOS \(os)")
 print("availability: \(model.availability)")
 print("contextSize: \(model.contextSize)")
-if #available(macOS 27, *) {
-    let caps = model.capabilities
-    print("variant: \(model.variant.displayName); capabilities: vision=\(caps.contains(.vision)) tools=\(caps.contains(.toolCalling)) guided=\(caps.contains(.guidedGeneration)) reasoning=\(caps.contains(.reasoning))")
-}
+let caps = model.capabilities
+print("variant: \(model.variant.displayName); capabilities: vision=\(caps.contains(.vision)) tools=\(caps.contains(.toolCalling)) guided=\(caps.contains(.guidedGeneration)) reasoning=\(caps.contains(.reasoning))")
 guard model.isAvailable else {
     print("The model is unavailable; nothing else can be checked.")
     exit(2)
@@ -108,7 +106,7 @@ await check("A2", "Transcript with a prior .response entry is remembered") {
 
 await check("B", "Throwing from Tool.call surfaces the model's arguments; transcript keeps the .toolCalls entry") {
     let session = LanguageModelSession(model: model, tools: [weatherTool], instructions: "You are a helpful assistant. Use tools when relevant.")
-    if #available(macOS 27, *) { session.transcriptErrorHandlingPolicy = .preserveTranscript }
+    session.transcriptErrorHandlingPolicy = .preserveTranscript
     do {
         let response = try await session.respond(to: "What's the weather in Paris right now?")
         throw SpikeFailure("the model answered without calling the tool: \(response.content)")
@@ -117,13 +115,9 @@ await check("B", "Throwing from Tool.call surfaces the model's arguments; transc
             throw SpikeFailure("unexpected underlying error \(error.underlyingError)")
         }
         let city = try intercepted.arguments.value(String.self, forProperty: "city")
-        var detail = "intercepted \(intercepted.toolName)(city: \(city))"
-        if #available(macOS 27, *) {
-            let kept = session.transcript.contains { if case .toolCalls = $0 { return true } else { return false } }
-            guard kept else { throw SpikeFailure("preserveTranscript did not keep the .toolCalls entry") }
-            detail += "; .toolCalls entry preserved (\(session.transcript.count) entries)"
-        }
-        return detail
+        let kept = session.transcript.contains { if case .toolCalls = $0 { return true } else { return false } }
+        guard kept else { throw SpikeFailure("preserveTranscript did not keep the .toolCalls entry") }
+        return "intercepted \(intercepted.toolName)(city: \(city)); .toolCalls entry preserved (\(session.transcript.count) entries)"
     }
 }
 
@@ -137,11 +131,7 @@ await check("C", "rtemislive's real tool schemas convert and are accepted by the
     var summary: [String] = []
     for (name, json) in tools.objectValue ?? [:] {
         let result = try SchemaConverter.convert(json, name: name)
-        var line = "\(name): ok, \(result.warnings.count) warnings"
-        if #available(macOS 26.4, *) {
-            line += ", \(try await model.tokenCount(for: result.schema)) tokens"
-        }
-        summary.append(line)
+        summary.append("\(name): ok, \(result.warnings.count) warnings, \(try await model.tokenCount(for: result.schema)) tokens")
     }
     return summary.joined(separator: "; ")
 }
@@ -165,9 +155,9 @@ await check("C2", "The model fills rtemislive's validate_config tool from a plai
     }
 }
 
-// MARK: - D. Tool calling modes (macOS 27)
+// MARK: - D. Tool calling modes
 
-if #available(macOS 27, *) {
+do {
     await check("D", "toolCallingMode .required forces a call") {
         let session = LanguageModelSession(model: model, tools: [weatherTool], instructions: "You are a helpful assistant.")
         let options = GenerationOptions(samplingMode: nil, temperature: nil, maximumResponseTokens: nil, toolCallingMode: .required)
@@ -184,8 +174,6 @@ if #available(macOS 27, *) {
         let response = try await session.respond(to: "What's the weather in Paris?", options: options)
         return "text answer: \"\(response.content.prefix(60))\""
     }
-} else {
-    print("\n[D] skipped — toolCallingMode needs macOS 27")
 }
 
 // MARK: - E. Streaming
@@ -220,17 +208,13 @@ await check("E2", "Structured snapshots are partial JSON, not text prefixes (so 
 
 // MARK: - F. Token accounting and errors
 
-if #available(macOS 27, *) {
-    await check("F", "Response.usage reports token counts") {
-        let session = LanguageModelSession(model: model)
-        let response = try await session.respond(to: "Say OK.")
-        guard response.usage.input.totalTokenCount > 0, response.usage.output.totalTokenCount > 0 else {
-            throw SpikeFailure("usage is zero")
-        }
-        return "in=\(response.usage.input.totalTokenCount) out=\(response.usage.output.totalTokenCount)"
+await check("F", "Response.usage reports token counts") {
+    let session = LanguageModelSession(model: model)
+    let response = try await session.respond(to: "Say OK.")
+    guard response.usage.input.totalTokenCount > 0, response.usage.output.totalTokenCount > 0 else {
+        throw SpikeFailure("usage is zero")
     }
-} else {
-    print("\n[F] skipped — Response.usage needs macOS 27 (the bridge estimates tokens)")
+    return "in=\(response.usage.input.totalTokenCount) out=\(response.usage.output.totalTokenCount)"
 }
 
 await check("F2", "An oversized prompt is reported as a context-size error (mapped to 400)") {

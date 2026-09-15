@@ -10,7 +10,7 @@ refuses every request that comes from a web page. `rtemis-afm` listens on
 `http://127.0.0.1:1977`, accepts requests from rtemislive (and any local
 development server), and translates them for the framework.
 
-**Requirements:** an Apple silicon Mac, macOS 26 or later, Apple Intelligence
+**Requirements:** an Apple silicon Mac, macOS 27 or later, Apple Intelligence
 turned on in System Settings. No Apple Developer account, no model download.
 
 ## Install and run
@@ -70,12 +70,11 @@ Notes on the chat endpoint:
 - **Tools** round-trip: the model's call comes back as `tool_calls` with
   `finish_reason: "tool_calls"`; post the history back with the `tool` result
   and the model continues. `tool_choice` `"auto"`, `"none"`, `"required"` and a
-  forced function all work on macOS 27 (`"required"` and forced need macOS 27).
+  forced function all work.
 - **Structured output**: `response_format: { type: "json_schema" }` constrains
   generation to the schema. The finished object is sent once, even when
   streaming. `json_object` adds an instruction but does not constrain.
-- **Usage** is the framework's own token count on macOS 27; on macOS 26 it is
-  a character-based estimate.
+- **Usage** is the framework's own token count (`Response.usage`).
 - **Errors** carry an honest status: `400 context_length_exceeded` for a
   prompt that does not fit, `400 content_filter` when guardrails fire,
   `503 model_unavailable` when Apple Intelligence is off, `404` for a model
@@ -149,10 +148,8 @@ swift run afm-spike               # framework compatibility probe (needs the mod
 swift run rtemis-afm --verbose    # run from source
 ```
 
-Built with Xcode 27.0 / Swift 6.4 on macOS 27.0. The package's deployment
-target is macOS 26, but compiling needs the macOS 27 SDK; macOS 27-only APIs
-are guarded with `#available` and degrade on macOS 26 (estimated usage, no
-`tool_choice: required`, one tool call per round). See
+Built with Xcode 27.0 / Swift 6.4 on macOS 27.0; macOS 27 is also the
+deployment target, so nothing is availability-guarded. See
 [`docs/maintenance.md`](docs/maintenance.md) before updating anything.
 
 ## License

@@ -16,8 +16,7 @@ public struct PreparedChat: Sendable {
     public var responseSchema: GenerationSchema?
     /// Schema-conversion warnings, for the verbose log.
     public var warnings: [String]
-    /// Text of the instructions, for token estimates where the framework
-    /// gives none (macOS 26).
+    /// Text of the instructions, for logging and diagnostics.
     public var instructionsText: String
 }
 
@@ -26,13 +25,6 @@ public struct PreparedChat: Sendable {
 /// This is pure: no model, no I/O, so it is unit-tested directly. Every
 /// failure is a `BridgeError` with the right HTTP status.
 public enum RequestPreparer {
-    /// Whether the running OS supports `tool_choice: required` / a forced
-    /// function (`GenerationOptions.toolCallingMode`, macOS 27+).
-    public static var supportsRequiredToolCalls: Bool {
-        if #available(macOS 27, *) { return true }
-        return false
-    }
-
     public static func prepare(_ request: ChatCompletionRequest) throws(BridgeError) -> PreparedChat {
         guard RtemisAFM.acceptedModelIDs.contains(request.model) else {
             throw .modelNotFound(request.model)
@@ -53,9 +45,6 @@ public enum RequestPreparer {
         case .auto:
             tools = try convertTools(definitions, warnings: &warnings)
         case .required:
-            guard supportsRequiredToolCalls else {
-                throw .unsupported("tool_choice \"required\" needs macOS 27 or later")
-            }
             guard !definitions.isEmpty else { throw .invalidRequest("tool_choice \"required\" but no tools were given") }
             tools = try convertTools(definitions, warnings: &warnings)
             toolCallingMode = .required
@@ -63,9 +52,6 @@ public enum RequestPreparer {
             // OpenAI's forced call = "call exactly this function". The
             // framework cannot name a tool, but offering only that tool and
             // requiring a call amounts to the same thing.
-            guard supportsRequiredToolCalls else {
-                throw .unsupported("forcing a specific tool needs macOS 27 or later")
-            }
             let chosen = definitions.filter { $0.function.name == name }
             guard !chosen.isEmpty else {
                 throw .invalidRequest("tool_choice names \"\(name)\" but no such tool was given", code: "invalid_tool_choice")
@@ -126,8 +112,8 @@ public enum RequestPreparer {
         )
     }
 
-    /// Local mirror of `GenerationOptions.ToolCallingMode`, which only
-    /// exists on macOS 27; keeps the availability check in one place.
+    /// Which `GenerationOptions.ToolCallingMode` to set: `.auto` leaves the
+    /// framework's default (`nil`), `.required` forces a call.
     enum ToolCallingMode { case auto, required }
 
     static func convertTools(_ definitions: [ToolDefinition], warnings: inout [String]) throws(BridgeError) -> [BridgeTool] {
@@ -175,11 +161,9 @@ public enum RequestPreparer {
             temperature: request.temperature,
             maximumResponseTokens: request.effectiveMaxTokens
         )
-        if #available(macOS 27, *) {
-            switch toolCallingMode {
-            case .auto: options.toolCallingMode = nil
-            case .required: options.toolCallingMode = .required
-            }
+        switch toolCallingMode {
+        case .auto: options.toolCallingMode = nil
+        case .required: options.toolCallingMode = .required
         }
         return options
     }

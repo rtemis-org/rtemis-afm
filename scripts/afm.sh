@@ -5,7 +5,7 @@
 #   curl -fsSL https://live.rtemis.org/afm.sh | sh
 #
 # What it does, in order:
-#   1. Checks this is an Apple silicon Mac on macOS 26 or later.
+#   1. Checks this is an Apple silicon Mac on macOS 27 or later.
 #   2. Finds the latest release of rtemis-org/rtemis-afm on GitHub.
 #   3. Downloads the release tarball and its SHA256SUMS, and verifies the hash.
 #   4. Installs the binary to ~/.rtemis/bin/rtemis-afm (no sudo, no PATH edits).
@@ -40,7 +40,7 @@ fail() { printf 'afm.sh: %s\n' "$*" >&2; exit 1; }
 
 OS_VERSION="$(sw_vers -productVersion)"
 OS_MAJOR="${OS_VERSION%%.*}"
-[ "$OS_MAJOR" -ge 26 ] 2>/dev/null || fail "rtemis-afm needs macOS 26 or later (this Mac runs $OS_VERSION)."
+[ "$OS_MAJOR" -ge 27 ] 2>/dev/null || fail "rtemis-afm needs macOS 27 or later (this Mac runs $OS_VERSION)."
 
 command -v curl >/dev/null || fail "curl is required."
 command -v shasum >/dev/null || fail "shasum is required."

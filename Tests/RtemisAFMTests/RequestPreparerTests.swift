@@ -75,17 +75,9 @@ final class RequestPreparerTests: XCTestCase {
         {"model":"afm","messages":[{"role":"user","content":"hi"}],"tool_choice":{"type":"function","function":{"name":"b"}},
          "tools":[{"type":"function","function":{"name":"a"}},{"type":"function","function":{"name":"b"}}]}
         """)
-        if RequestPreparer.supportsRequiredToolCalls {
-            let prepared = try RequestPreparer.prepare(request)
-            XCTAssertEqual(prepared.tools.map(\.name), ["b"])
-            if #available(macOS 27, *) {
-                XCTAssertEqual(prepared.options.toolCallingMode, .required)
-            }
-        } else {
-            XCTAssertThrowsError(try RequestPreparer.prepare(request)) { error in
-                XCTAssertEqual((error as? BridgeError)?.code, "unsupported")
-            }
-        }
+        let prepared = try RequestPreparer.prepare(request)
+        XCTAssertEqual(prepared.tools.map(\.name), ["b"])
+        XCTAssertEqual(prepared.options.toolCallingMode, .required)
     }
 
     func testToolValidation() throws {

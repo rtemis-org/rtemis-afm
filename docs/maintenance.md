@@ -24,18 +24,18 @@ rtemislive `devel` — 15 September 2026.**
    grep -n "case " "$IF" | grep -A0 "Transcript"           # entry/segment kinds → TranscriptBuilder
    grep -n "deprecated\|obsoleted" "$IF"                   # anything we still call?
    ```
-4. Check whether any `#available(macOS 27, *)` guard can go, or whether the
-   floor in `Package.swift` should rise. Guards live in `ErrorMapper`,
-   `RequestPreparer`, `FoundationModelsBackend`, `SchemaConverter`.
+4. Decide whether the floor in `Package.swift` (`macOS "27.0"`) should
+   rise. There are no `#available` guards: anything the new SDK adds is
+   either adopted outright (and the floor raised) or left alone.
 
 ### Things worth watching, by area
 
-**Errors.** Two enums coexist: `LanguageModelSession.GenerationError` (what
-`SystemLanguageModel` throws today) and `LanguageModelError` (new in macOS 27,
-used by the `LanguageModel` protocol). If the system model starts throwing
-the new one, nothing breaks — both are mapped — but the tool-call and refusal
-catches in `FoundationModelsBackend.generate` look for `GenerationError`
-only; extend them if `LanguageModelError.refusal` shows up in practice.
+**Errors.** Which error enum the system model throws depends on the
+*deployment target*, not the OS: built for macOS 26 it throws the deprecated
+`LanguageModelSession.GenerationError`; built for macOS 27 it throws
+`LanguageModelError` (spike check F2 prints the type). The bridge targets 27
+and handles only the new enum. If the floor ever drops back, the old enum
+needs a mapping again.
 
 **Schemas.** `GenerationSchema` is `Codable`, but decodes only its own
 dialect (`title` and `x-order` required; no `type: [..]`). If a future SDK
@@ -53,13 +53,10 @@ a release changes that, the fallback is the single intercepted call.
 functions rely on.
 
 **Context window.** `SystemLanguageModel.contextSize` reports 8192 on
-macOS 27 and is back-deployed to return 4096 on macOS 26. If Apple raises it
+macOS 27.0. If Apple raises it
 (or exposes a larger variant — `SystemLanguageModel.Variant` exists now),
 `/v1/models` picks it up automatically; rtemislive's small-context profile
 should read the value rather than assume 8k.
-
-**Usage.** `Response.usage` / `Snapshot.usage` are macOS 27+. The macOS 26
-estimate (`estimatedUsage`) can go when the floor rises.
 
 **Vision.** The macOS 27 model accepts image attachments
 (`Transcript.Segment.attachment`). The bridge rejects `image_url` parts with
@@ -123,7 +120,8 @@ reference for `TranscriptBuilder`; if Apple ever ships the forward direction
   release workflow target `rtemis-org/homebrew-tap` (install line:
   `brew install rtemis-org/tap/rtemis-afm`). Align one or the other.
 - `scripts/afm.sh` is the source; copy it to rtemislive's `public/afm.sh` on
-  every change (the Help page links to the deployed URL).
+  every change (the Help page links to the deployed URL). The Help page
+  currently says "macOS 26 or later"; the bridge needs 27.
 - Bump `Sources/RtemisAFM/Version.swift` and `CHANGELOG.md` before tagging;
   the release workflow refuses a tag that does not match the version constant.
 
@@ -133,7 +131,5 @@ reference for `TranscriptBuilder`; if Apple ever ships the forward direction
 - `json_object` asks for JSON but cannot enforce it (no schema to constrain to).
 - `finish_reason: "length"` is inferred from the token cap, not reported by
   the framework.
-- On macOS 26: estimated usage, no `tool_choice: required`, one tool call per
-  round. Untested — no macOS 26 machine was available.
 - Guardrails fire on odd inputs (a phrase repeated thousands of times), and
   their message is surfaced verbatim as `400 content_filter`.

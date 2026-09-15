@@ -187,9 +187,9 @@ public struct SchemaConverter {
         case "boolean":
             return DynamicGenerationSchema(type: Bool.self)
         case "null":
-            return nullSchema(path)
+            return .null
         case nil:
-            if types == ["null"] { return nullSchema(path) }
+            if types == ["null"] { return .null }
             warn(path, "no type; using string")
             return DynamicGenerationSchema(type: String.self)
         default:
@@ -249,7 +249,7 @@ public struct SchemaConverter {
         // `anyOf: [{type: X}, {type: "null"}]` is another spelling of
         // nullable; the property-level handling covers it, so just drop null.
         let nonNull = choices.filter { !Self.types(of: $0.objectValue ?? [:]).elementsEqual(["null"]) }
-        guard !nonNull.isEmpty else { return nullSchema(path) }
+        guard !nonNull.isEmpty else { return .null }
         if nonNull.count == 1 {
             return try convert(nonNull[0], name: name, path: path + "/anyOf/0")
         }
@@ -316,14 +316,6 @@ public struct SchemaConverter {
     }
 
     // MARK: - Helpers
-
-    /// A schema that only admits `null`. `DynamicGenerationSchema.null` is
-    /// macOS 26.4+; older systems get a string and a warning.
-    private mutating func nullSchema(_ path: String) -> DynamicGenerationSchema {
-        if #available(macOS 26.4, *) { return .null }
-        warn(path, "null type needs macOS 26.4; using string")
-        return DynamicGenerationSchema(type: String.self)
-    }
 
     /// The `type` keyword normalized to a list.
     private static func types(of object: [String: JSONValue]) -> [String] {

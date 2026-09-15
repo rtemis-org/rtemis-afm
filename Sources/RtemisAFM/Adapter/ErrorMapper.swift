@@ -8,18 +8,22 @@ import FoundationModels
 /// Translates errors thrown by the FoundationModels framework into
 /// `BridgeError`s with an honest HTTP status.
 ///
-/// Two error families exist side by side (September 2026, macOS 27 SDK):
+/// The framework's errors (macOS 27 SDK, September 2026):
 ///
-/// - `LanguageModelSession.GenerationError` — the macOS 26 enum, still what
-///   `SystemLanguageModel` throws in practice.
-/// - `LanguageModelError` — introduced in macOS 27 alongside the
-///   `LanguageModel` protocol, thrown by third-party and cloud models and
-///   possibly by the system model in a future release.
+/// - `LanguageModelError` — generation failures, introduced in macOS 27 with
+///   the `LanguageModel` protocol. `SystemLanguageModel` throws it for
+///   binaries built against macOS 27 (the older
+///   `LanguageModelSession.GenerationError` is deprecated and only thrown
+///   to binaries linked against macOS 26 — `afm-spike` check F2 confirms
+///   which one arrives).
+/// - `SystemLanguageModel.Error.assetsUnavailable` — the model files are
+///   not on disk.
+/// - `LanguageModelSession.Error` — misuse of a session (concurrent calls).
+/// - `LanguageModelSession.ToolCallError` — a tool threw.
 ///
-/// Both are handled so the mapping keeps working whichever one shows up.
-/// **Future updates:** when a new macOS SDK lands, diff this switch against
-/// the cases in `FoundationModels.swiftinterface` (see `afm-spike`) and
-/// add any new case; an unmapped case falls through to `500 server_error`.
+/// **Future updates:** when a new macOS SDK lands, diff these switches
+/// against the cases in `FoundationModels.swiftinterface` (see `afm-spike`)
+/// and add any new case; an unmapped case falls through to `500 server_error`.
 public enum ErrorMapper {
     /// The `BridgeError` for any error that escaped a generation.
     public static func map(_ error: any Error) -> BridgeError {
@@ -33,15 +37,11 @@ public enum ErrorMapper {
             return map(toolError.underlyingError)
         }
 
-        if let generation = error as? LanguageModelSession.GenerationError {
-            return map(generation)
-        }
-
-        if #available(macOS 27, *), let modelError = error as? LanguageModelError {
+        if let modelError = error as? LanguageModelError {
             return map(modelError)
         }
 
-        if #available(macOS 27, *), let sessionError = error as? LanguageModelSession.Error {
+        if let sessionError = error as? LanguageModelSession.Error {
             switch sessionError {
             case .concurrentRequests:
                 // The generation gate serializes requests, so this should
@@ -55,7 +55,7 @@ public enum ErrorMapper {
             }
         }
 
-        if #available(macOS 27, *), let assets = error as? SystemLanguageModel.Error {
+        if let assets = error as? SystemLanguageModel.Error {
             return .modelUnavailable(describe(assets))
         }
 
@@ -63,7 +63,7 @@ public enum ErrorMapper {
             return .invalidRequest("Unsupported schema: \(describe(error))", code: "unsupported_schema")
         }
 
-        if #available(macOS 27, *), let parsing = error as? GeneratedContent.ParsingError {
+        if let parsing = error as? GeneratedContent.ParsingError {
             return .invalidRequest("Could not parse generated content: \(parsing.debugDescription)")
         }
 
@@ -75,34 +75,7 @@ public enum ErrorMapper {
         return .serverError(describe(error))
     }
 
-    /// The macOS 26 error enum.
-    static func map(_ error: LanguageModelSession.GenerationError) -> BridgeError {
-        let message = describe(error)
-        switch error {
-        case .exceededContextWindowSize:
-            return BridgeError(status: 400, type: "invalid_request_error", code: "context_length_exceeded", message: message)
-        case .guardrailViolation:
-            return BridgeError(status: 400, type: "content_filter", code: "content_filter", message: message)
-        case .unsupportedGuide, .unsupportedLanguageOrLocale, .decodingFailure:
-            return .invalidRequest(message)
-        case .assetsUnavailable:
-            return .modelUnavailable(message)
-        case .rateLimited:
-            return BridgeError(status: 429, type: "rate_limit_exceeded", code: "rate_limit_exceeded", message: message)
-        case .concurrentRequests:
-            return BridgeError(status: 429, type: "rate_limit_exceeded", code: "concurrent_requests", message: message)
-        case .refusal:
-            // Refusals are normally turned into a 200 with `message.refusal`
-            // by the engine; reaching here means it happened somewhere the
-            // engine could not intercept.
-            return BridgeError(status: 400, type: "content_filter", code: "refusal", message: message)
-        @unknown default:
-            return .serverError(message)
-        }
-    }
-
-    /// The macOS 27 error enum.
-    @available(macOS 27, *)
+    /// Generation failures.
     static func map(_ error: LanguageModelError) -> BridgeError {
         let message = describe(error)
         switch error {
@@ -114,6 +87,9 @@ public enum ErrorMapper {
         case .guardrailViolation:
             return BridgeError(status: 400, type: "content_filter", code: "content_filter", message: message)
         case .refusal:
+            // Refusals are normally turned into a 200 with `message.refusal`
+            // by the engine; reaching here means it happened somewhere the
+            // engine could not intercept.
             return BridgeError(status: 400, type: "content_filter", code: "refusal", message: message)
         case .rateLimited:
             return BridgeError(status: 429, type: "rate_limit_exceeded", code: "rate_limit_exceeded", message: message)
