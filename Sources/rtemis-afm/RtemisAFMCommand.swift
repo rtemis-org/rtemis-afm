@@ -57,10 +57,13 @@ struct Serve: AsyncParsableCommand {
 
     func run() async throws {
         // swift-log needs a backend before the first logger is made. The
-        // standard-output handler prints "level message" lines.
+        // stderr handler prints one line per message. `--verbose` shows the
+        // bridge's `info` lines (requests, ignored schema keywords); without
+        // it only warnings and errors appear. Hummingbird's own `debug`
+        // chatter stays off in both cases.
         LoggingSystem.bootstrap { label in
             var handler = StreamLogHandler.standardError(label: label)
-            handler.logLevel = verbose ? .debug : .notice
+            handler.logLevel = verbose ? .info : .warning
             return handler
         }
         let logger = Logger(label: "rtemis-afm")

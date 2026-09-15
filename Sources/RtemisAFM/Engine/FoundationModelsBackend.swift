@@ -74,7 +74,7 @@ public final class FoundationModelsBackend: ChatBackend {
                 do {
                     let prepared = try RequestPreparer.prepare(request)
                     for warning in prepared.warnings {
-                        logger.debug("schema: \(warning)")
+                        logger.info("schema: \(warning)")
                     }
                     try await gate.acquire()
                     defer { Task { await gate.release() } }
@@ -121,18 +121,18 @@ public final class FoundationModelsBackend: ChatBackend {
                     continuation.yield(.contentDelta(producedText))
                 }
             } else {
-                // Plain text. Snapshots are cumulative; emit what is new.
+                // Plain text. Snapshots are cumulative (spike check E), so
+                // the delta is whatever follows the text already sent. The
+                // common-prefix computation also copes, as well as anything
+                // can, with a snapshot that rewrote earlier text: the new
+                // tail is sent and the old head stays as the client has it.
                 for try await snapshot in session.streamResponse(to: prepared.prompt, options: prepared.options) {
                     let full = snapshot.content
-                    if full.count > producedText.count, full.hasPrefix(producedText) {
-                        continuation.yield(.contentDelta(String(full.dropFirst(producedText.count))))
-                        producedText = full
-                    } else if full != producedText {
-                        // Not a prefix — should not happen for text, but never
-                        // drop model output silently.
-                        continuation.yield(.contentDelta(full))
-                        producedText += full
+                    let shared = full.commonPrefix(with: producedText).count
+                    if shared < full.count {
+                        continuation.yield(.contentDelta(String(full.dropFirst(shared))))
                     }
+                    producedText = full
                     if #available(macOS 27, *) { usage = Self.usage(from: snapshot.usage) }
                 }
             }
