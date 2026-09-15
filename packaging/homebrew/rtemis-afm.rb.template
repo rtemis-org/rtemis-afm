@@ -1,0 +1,37 @@
+# Homebrew formula for rtemis-afm — template.
+#
+# The release workflow fills in {{VERSION}} and {{SHA256}} and commits the
+# result as `Formula/rtemis-afm.rb` in the `rtemis-org/homebrew-tap`
+# repository, so that `brew install rtemis-org/tap/rtemis-afm` works.
+#
+# The formula installs a prebuilt, ad-hoc-signed binary rather than building
+# from source: a source build needs Xcode 27, which most users will not have.
+class RtemisAfm < Formula
+  desc "Serve Apple's on-device Foundation Model to rtemislive over the OpenAI chat wire"
+  homepage "https://github.com/rtemis-org/rtemis-afm"
+  url "https://github.com/rtemis-org/rtemis-afm/releases/download/v{{VERSION}}/rtemis-afm-{{VERSION}}-macos-arm64.tar.gz"
+  sha256 "{{SHA256}}"
+  version "{{VERSION}}"
+  license "BSD-3-Clause"
+
+  # Apple Intelligence exists only on Apple silicon, macOS 26 (Tahoe) or later.
+  depends_on arch: :arm64
+  depends_on macos: :tahoe
+
+  def install
+    bin.install "rtemis-afm"
+  end
+
+  def caveats
+    <<~EOS
+      Start the bridge with:
+        rtemis-afm
+      then pick "Apple Intelligence" in rtemislive (https://live.rtemis.org).
+      Apple Intelligence must be turned on in System Settings.
+    EOS
+  end
+
+  test do
+    assert_equal "{{VERSION}}", shell_output("#{bin}/rtemis-afm version").strip
+  end
+end

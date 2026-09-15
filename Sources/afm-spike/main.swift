@@ -1,186 +1,278 @@
+// main.swift — afm-spike
+// ::rtemis-afm::
+// 2026- EDG rtemis.org
+//
+// A compatibility probe for the FoundationModels behaviors rtemis-afm
+// depends on. It is not a test suite: it talks to the real on-device model,
+// so it needs a Mac with Apple Intelligence turned on, and it *prints* what
+// it finds rather than asserting. Run it after every macOS or Xcode update:
+//
+//     swift run afm-spike
+//
+// Each numbered check corresponds to an assumption documented in
+// `Sources/afm-spike/README.md`. A check that reports FAIL means the bridge
+// needs a code change before it can be trusted on that OS version.
+
 import Foundation
 import FoundationModels
+import RtemisAFM
 
-// Quick M0 probe — replaced by the documented version once findings are in.
+// MARK: - Helpers
+
+// Top-level code in `main.swift` runs on the main actor; the helper is
+// marked so too, which lets it mutate the counter.
+var failures = 0
+
+@MainActor
+func check(_ id: String, _ title: String, _ body: () async throws -> String) async {
+    print("\n[\(id)] \(title)")
+    do {
+        let detail = try await body()
+        print("  PASS — \(detail)")
+    } catch {
+        failures += 1
+        print("  FAIL — \(error)")
+    }
+}
+
+struct SpikeFailure: Error, CustomStringConvertible {
+    let description: String
+    init(_ description: String) { self.description = description }
+}
+
+/// Builds a `GenerationSchema` from JSON Schema through the bridge's own
+/// converter, so the probe exercises the same code the server runs.
+func schema(_ json: JSONValue, name: String) throws -> GenerationSchema {
+    try SchemaConverter.convert(json, name: name).schema
+}
+
+let weatherSchema: JSONValue = [
+    "type": "object",
+    "properties": [
+        "city": ["type": "string", "description": "City name"],
+        "unit": ["type": "string", "enum": ["celsius", "fahrenheit"]],
+    ],
+    "required": ["city"],
+]
+
+// MARK: - Environment
 
 let model = SystemLanguageModel.default
-print("availability:", model.availability)
-print("contextSize:", model.contextSize)
+let os = ProcessInfo.processInfo.operatingSystemVersionString
+print("afm-spike for rtemis-afm \(RtemisAFM.version) — macOS \(os)")
+print("availability: \(model.availability)")
+print("contextSize: \(model.contextSize)")
 if #available(macOS 27, *) {
-    print("variant:", model.variant.displayName, "caps: vision=\(model.capabilities.contains(.vision)) tools=\(model.capabilities.contains(.toolCalling)) guided=\(model.capabilities.contains(.guidedGeneration)) reasoning=\(model.capabilities.contains(.reasoning))")
+    let caps = model.capabilities
+    print("variant: \(model.variant.displayName); capabilities: vision=\(caps.contains(.vision)) tools=\(caps.contains(.toolCalling)) guided=\(caps.contains(.guidedGeneration)) reasoning=\(caps.contains(.reasoning))")
+}
+guard model.isAvailable else {
+    print("The model is unavailable; nothing else can be checked.")
+    exit(2)
 }
 
-struct Intercepted: Error { let name: String; let json: String }
+let weatherTool = BridgeTool(name: "get_weather", description: "Get the current weather for a city.", parameters: try schema(weatherSchema, name: "get_weather"))
 
-struct BridgeTool: Tool {
-    typealias Arguments = GeneratedContent
-    typealias Output = String
-    let name: String
-    let description: String
-    let parameters: GenerationSchema
-    func call(arguments: GeneratedContent) async throws -> String {
-        print("  [tool \(name) called with]", arguments.jsonString)
-        throw Intercepted(name: name, json: arguments.jsonString)
+// MARK: - A. Client-authored transcript with tool entries
+
+await check("A", "Transcript with .toolCalls/.toolOutput continues from a tool result") {
+    let args = try GeneratedContent(json: #"{"city":"Paris","unit":"celsius"}"#)
+    let entries: [Transcript.Entry] = [
+        .instructions(.init(segments: [.text(.init(content: "You are a helpful assistant."))], toolDefinitions: [.init(tool: weatherTool)])),
+        .prompt(.init(segments: [.text(.init(content: "What's the weather in Paris right now?"))])),
+        .toolCalls(.init([.init(id: "call_1", toolName: "get_weather", arguments: args)])),
+        .toolOutput(.init(id: "call_1", toolName: "get_weather", segments: [.text(.init(content: #"{"temperature_c": 18, "sky": "overcast"}"#))])),
+    ]
+    let session = LanguageModelSession(model: model, tools: [weatherTool], transcript: Transcript(entries: entries))
+    // The bridge passes an empty prompt when the history ends with a tool result.
+    let response = try await session.respond(to: "")
+    guard response.content.contains("18") else {
+        throw SpikeFailure("the answer did not use the tool output: \(response.content)")
+    }
+    return "answer used the tool output: \"\(response.content.prefix(80))\""
+}
+
+await check("A2", "Transcript with a prior .response entry is remembered") {
+    let entries: [Transcript.Entry] = [
+        .instructions(.init(segments: [.text(.init(content: "Answer briefly."))], toolDefinitions: [])),
+        .prompt(.init(segments: [.text(.init(content: "My name is Ada."))])),
+        .response(.init(assetIDs: [], segments: [.text(.init(content: "Nice to meet you, Ada!"))])),
+    ]
+    let session = LanguageModelSession(model: model, transcript: Transcript(entries: entries))
+    let response = try await session.respond(to: "What is my name?")
+    guard response.content.contains("Ada") else { throw SpikeFailure("got \(response.content)") }
+    return "\"\(response.content.prefix(60))\""
+}
+
+// MARK: - B. Throwing from Tool.call
+
+await check("B", "Throwing from Tool.call surfaces the model's arguments; transcript keeps the .toolCalls entry") {
+    let session = LanguageModelSession(model: model, tools: [weatherTool], instructions: "You are a helpful assistant. Use tools when relevant.")
+    if #available(macOS 27, *) { session.transcriptErrorHandlingPolicy = .preserveTranscript }
+    do {
+        let response = try await session.respond(to: "What's the weather in Paris right now?")
+        throw SpikeFailure("the model answered without calling the tool: \(response.content)")
+    } catch let error as LanguageModelSession.ToolCallError {
+        guard let intercepted = error.underlyingError as? ToolCallIntercepted else {
+            throw SpikeFailure("unexpected underlying error \(error.underlyingError)")
+        }
+        let city = try intercepted.arguments.value(String.self, forProperty: "city")
+        var detail = "intercepted \(intercepted.toolName)(city: \(city))"
+        if #available(macOS 27, *) {
+            let kept = session.transcript.contains { if case .toolCalls = $0 { return true } else { return false } }
+            guard kept else { throw SpikeFailure("preserveTranscript did not keep the .toolCalls entry") }
+            detail += "; .toolCalls entry preserved (\(session.transcript.count) entries)"
+        }
+        return detail
     }
 }
 
-func schema(_ json: String) throws -> GenerationSchema {
-    // Minimal hand-built dynamic schema for the probe; the real converter lives in the library.
-    if json.contains("colors") {
-        let arr = DynamicGenerationSchema(arrayOf: DynamicGenerationSchema(type: String.self), minimumElements: 3, maximumElements: 3)
-        let root = DynamicGenerationSchema(name: "Colors", properties: [.init(name: "colors", schema: arr)])
-        return try GenerationSchema(root: root, dependencies: [])
+// MARK: - C. JSON Schema shapes
+
+await check("C", "rtemislive's real tool schemas convert and are accepted by the model") {
+    // The fixture lives with the unit tests; resolve it relative to this file.
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let fixture = root.appending(path: "Tests/RtemisAFMTests/Fixtures/rtemis-tools.json")
+    let tools = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: fixture))
+    var summary: [String] = []
+    for (name, json) in tools.objectValue ?? [:] {
+        let result = try SchemaConverter.convert(json, name: name)
+        var line = "\(name): ok, \(result.warnings.count) warnings"
+        if #available(macOS 26.4, *) {
+            line += ", \(try await model.tokenCount(for: result.schema)) tokens"
+        }
+        summary.append(line)
     }
-    let root = DynamicGenerationSchema(name: "get_weather", description: nil, properties: [
-        .init(name: "city", description: "City name", schema: DynamicGenerationSchema(type: String.self)),
-        .init(name: "unit", schema: DynamicGenerationSchema(name: "unit", anyOf: ["c", "f"]), isOptional: true),
-    ])
-    return try GenerationSchema(root: root, dependencies: [])
+    return summary.joined(separator: "; ")
 }
 
-// (c1) Does GenerationSchema decode from JSON Schema?
-print("\n== (c1) GenerationSchema from JSON Schema")
-let weatherJSON = """
-{"type":"object","properties":{"city":{"type":"string","description":"City name"},"unit":{"type":"string","enum":["c","f"]}},"required":["city"]}
-"""
-let weatherSchema: GenerationSchema
-do {
-    weatherSchema = try schema(weatherJSON)
-    print("decoded OK:", weatherSchema.debugDescription.prefix(300))
-    let enc = try JSONEncoder().encode(weatherSchema)
-    print("re-encoded:", String(decoding: enc, as: UTF8.self).prefix(400))
-} catch {
-    print("decode FAILED:", error); exit(1)
+await check("C2", "The model fills rtemislive's validate_config tool from a plain request") {
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let fixture = root.appending(path: "Tests/RtemisAFMTests/Fixtures/rtemis-tools.json")
+    let tools = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: fixture))
+    let validate = BridgeTool(
+        name: "rtemis_validate_config",
+        description: "Check an rtemis config against the schema and the loaded dataset. Returns findings.",
+        parameters: try schema(tools["validate_config"]!, name: "rtemis_validate_config")
+    )
+    let session = LanguageModelSession(model: model, tools: [validate], instructions: "You plan machine-learning runs with rtemis. Use tools.")
+    do {
+        let response = try await session.respond(to: "Validate a config with algorithm glmnet, outcome column 'diagnosis', features 'age' and 'bmi'.")
+        throw SpikeFailure("no tool call; the model said: \(response.content.prefix(120))")
+    } catch let error as LanguageModelSession.ToolCallError {
+        let intercepted = error.underlyingError as! ToolCallIntercepted
+        return "arguments: \(intercepted.arguments.jsonString.prefix(160))"
+    }
 }
 
-// Real rtemislive fixture
-let fixtureURL = URL(fileURLWithPath: "/private/tmp/claude-501/-Users-sdg-Code-rtemis-afm/d7e815b5-59aa-4574-9fcc-d75b6466e1af/scratchpad/rtemis-tools.json")
-if let data = try? Data(contentsOf: fixtureURL),
-   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-    for (name, sch) in obj {
-        let d = try JSONSerialization.data(withJSONObject: sch)
+// MARK: - D. Tool calling modes (macOS 27)
+
+if #available(macOS 27, *) {
+    await check("D", "toolCallingMode .required forces a call") {
+        let session = LanguageModelSession(model: model, tools: [weatherTool], instructions: "You are a helpful assistant.")
+        let options = GenerationOptions(samplingMode: nil, temperature: nil, maximumResponseTokens: nil, toolCallingMode: .required)
         do {
-            var obj2 = try JSONSerialization.jsonObject(with: d) as! [String: Any]
-            func addOrder(_ o: inout [String: Any]) {
-                if let props = o["properties"] as? [String: Any] {
-                    var np: [String: Any] = [:]
-                    for (k, v) in props { var vv = v as! [String: Any]; addOrder(&vv); np[k] = vv }
-                    o["properties"] = np; o["x-order"] = Array(props.keys).sorted()
-                }
-                if var items = o["items"] as? [String: Any] { addOrder(&items); o["items"] = items }
-            }
-            addOrder(&obj2)
-            let d2 = try JSONSerialization.data(withJSONObject: obj2)
-            let s = try JSONDecoder().decode(GenerationSchema.self, from: d2)
-            if #available(macOS 26.4, *) { print("fixture \(name): decoded OK; tokenCount:", (try? await model.tokenCount(for: s)) ?? -1) }
-        } catch { print("fixture \(name): FAILED", error) }
+            let response = try await session.respond(to: "Say hello.", options: options)
+            throw SpikeFailure("no tool call: \(response.content)")
+        } catch let error as LanguageModelSession.ToolCallError {
+            return "called \(error.tool.name)"
+        }
+    }
+    await check("D2", "toolCallingMode .disallowed suppresses calls") {
+        let session = LanguageModelSession(model: model, tools: [weatherTool], instructions: "You are a helpful assistant.")
+        let options = GenerationOptions(samplingMode: nil, temperature: nil, maximumResponseTokens: nil, toolCallingMode: .disallowed)
+        let response = try await session.respond(to: "What's the weather in Paris?", options: options)
+        return "text answer: \"\(response.content.prefix(60))\""
+    }
+} else {
+    print("\n[D] skipped — toolCallingMode needs macOS 27")
+}
+
+// MARK: - E. Streaming
+
+await check("E", "Text snapshots are cumulative (each extends the previous)") {
+    let session = LanguageModelSession(model: model, instructions: "Answer briefly.")
+    var previous = ""
+    var count = 0
+    for try await snapshot in session.streamResponse(to: "Name three colors, one per line.") {
+        count += 1
+        guard snapshot.content.hasPrefix(previous) else {
+            throw SpikeFailure("snapshot \(count) is not an extension of the previous one")
+        }
+        previous = snapshot.content
+    }
+    return "\(count) snapshots, final \(previous.count) chars"
+}
+
+await check("E2", "Structured snapshots are partial JSON, not text prefixes (so the bridge sends the final object once)") {
+    let session = LanguageModelSession(model: model, instructions: "Answer briefly.")
+    let colors = try schema(["type": "object", "properties": ["colors": ["type": "array", "items": ["type": "string"], "minItems": 3, "maxItems": 3]], "required": ["colors"]], name: "colors")
+    var last = ""
+    var count = 0
+    for try await snapshot in session.streamResponse(to: "Name three colors.", schema: colors) {
+        count += 1
+        last = snapshot.rawContent.jsonString
+    }
+    let parsed = try JSONValue(parsing: last)
+    guard parsed["colors"]?.arrayValue?.count == 3 else { throw SpikeFailure("final JSON: \(last)") }
+    return "\(count) snapshots, final \(last)"
+}
+
+// MARK: - F. Token accounting and errors
+
+if #available(macOS 27, *) {
+    await check("F", "Response.usage reports token counts") {
+        let session = LanguageModelSession(model: model)
+        let response = try await session.respond(to: "Say OK.")
+        guard response.usage.input.totalTokenCount > 0, response.usage.output.totalTokenCount > 0 else {
+            throw SpikeFailure("usage is zero")
+        }
+        return "in=\(response.usage.input.totalTokenCount) out=\(response.usage.output.totalTokenCount)"
+    }
+} else {
+    print("\n[F] skipped — Response.usage needs macOS 27 (the bridge estimates tokens)")
+}
+
+await check("F2", "An oversized prompt is reported as a context-size error (mapped to 400)") {
+    // Varied text: a *repeated* phrase trips the guardrails first (a known
+    // quirk — see the README).
+    var words: [String] = []
+    var seed: UInt64 = 42
+    for _ in 0..<9000 {
+        seed = seed &* 6364136223846793005 &+ 1442695040888963407
+        words.append("w\(seed % 100_000)")
+    }
+    let session = LanguageModelSession(model: model)
+    do {
+        _ = try await session.respond(to: "Summarize: " + words.joined(separator: " "))
+        throw SpikeFailure("no error for a ~9k-word prompt")
+    } catch {
+        let mapped = ErrorMapper.map(error)
+        guard mapped.code == "context_length_exceeded" else { throw SpikeFailure("mapped to \(mapped.status) \(mapped.code ?? "-"): \(mapped.message)") }
+        return "\(type(of: error)) → \(mapped.status) \(mapped.code!)"
     }
 }
 
-// (b) throw from call
-print("\n== (b) throw from call")
-let tool = BridgeTool(name: "get_weather", description: "Get the current weather for a city.", parameters: weatherSchema)
-let session = LanguageModelSession(model: model, tools: [tool], instructions: "You are a helpful assistant. Use tools when relevant.")
-if #available(macOS 27, *) { session.transcriptErrorHandlingPolicy = .preserveTranscript }
-do {
-    let r = try await session.respond(to: "What's the weather in Paris right now?")
-    print("no tool call; answered:", r.content)
-} catch let e as LanguageModelSession.ToolCallError {
-    print("ToolCallError tool=\(e.tool.name) underlying=\(e.underlyingError)")
-    print("transcript after error:")
-    for entry in session.transcript { print("  ", entry) }
-} catch {
-    print("other error:", error)
+// MARK: - G. Cancellation
+
+await check("G", "Cancelling the task stops generation promptly") {
+    let task = Task {
+        let session = LanguageModelSession(model: model)
+        return try await session.respond(to: "Write a 500 word essay about rivers.").content
+    }
+    try await Task.sleep(for: .milliseconds(300))
+    let start = ContinuousClock.now
+    task.cancel()
+    switch await task.result {
+    case .success: throw SpikeFailure("completed anyway")
+    case .failure(let error):
+        let elapsed = ContinuousClock.now - start
+        guard elapsed < .seconds(2) else { throw SpikeFailure("took \(elapsed) to stop") }
+        return "\(type(of: error)) after \(elapsed)"
+    }
 }
 
-// (a) transcript with tool entries, then continuation
-print("\n== (a) transcript with toolCalls/toolOutput")
-let args = try GeneratedContent(json: #"{"city":"Paris","unit":"c"}"#)
-var entries: [Transcript.Entry] = [
-    .instructions(.init(segments: [.text(.init(content: "You are a helpful assistant."))], toolDefinitions: [.init(tool: tool)])),
-    .prompt(.init(segments: [.text(.init(content: "What's the weather in Paris right now?"))])),
-    .toolCalls(.init([.init(id: "call_1", toolName: "get_weather", arguments: args)])),
-    .toolOutput(.init(id: "call_1", toolName: "get_weather", segments: [.text(.init(content: #"{"temperature_c": 18, "sky": "overcast"}"#))])),
-]
-let s2 = LanguageModelSession(model: model, tools: [tool], transcript: Transcript(entries: entries))
-for variant in ["empty prompt", "prompt builder"] {
-    do {
-        let r: LanguageModelSession.Response<String>
-        if variant == "empty prompt" { r = try await s2.respond(to: "") }
-        else { r = try await s2.respond { "" } }
-        print("[\(variant)] continued OK:", r.content)
-        if #available(macOS 27, *) { print("  usage in=\(r.usage.input.totalTokenCount) out=\(r.usage.output.totalTokenCount)") }
-        break
-    } catch { print("[\(variant)] FAILED:", error) }
-}
+// MARK: - Summary
 
-// (a2) multi-turn with prior response entries
-print("\n== (a2) prior assistant response entry")
-entries = [
-    .instructions(.init(segments: [.text(.init(content: "Answer briefly."))], toolDefinitions: [])),
-    .prompt(.init(segments: [.text(.init(content: "My name is Ada."))])),
-    .response(.init(assetIDs: [], segments: [.text(.init(content: "Nice to meet you, Ada!"))])),
-]
-let s3 = LanguageModelSession(model: model, transcript: Transcript(entries: entries))
-let r3 = try await s3.respond(to: "What is my name?")
-print("answer:", r3.content)
-
-// (d) tool_choice required
-if #available(macOS 27, *) {
-    print("\n== (d) toolCallingMode .required")
-    let s4 = LanguageModelSession(model: model, tools: [tool], instructions: "You are a helpful assistant.")
-    do {
-        let r = try await s4.respond(to: "Say hello.", options: .init(samplingMode: nil, temperature: nil, maximumResponseTokens: nil, toolCallingMode: .required))
-        print("no tool call:", r.content)
-    } catch let e as LanguageModelSession.ToolCallError { print("required → tool called:", e.tool.name, e.underlyingError) }
-    catch { print("required error:", error) }
-    print("\n== (d2) toolCallingMode .disallowed")
-    do {
-        let r = try await s4.respond(to: "What's the weather in Paris?", options: .init(samplingMode: nil, temperature: nil, maximumResponseTokens: nil, toolCallingMode: .disallowed))
-        print("disallowed → text:", r.content.prefix(120))
-    } catch { print("disallowed error:", error) }
-}
-
-// (e) streaming snapshots: text and structured
-print("\n== (e) streaming")
-let s5 = LanguageModelSession(model: model, instructions: "Answer briefly.")
-var last = ""
-var n = 0
-for try await snap in s5.streamResponse(to: "Name three colors, one per line.") {
-    n += 1
-    if !snap.content.hasPrefix(last) { print("  NOT cumulative! prev=\(last) now=\(snap.content)") }
-    last = snap.content
-}
-print("snapshots:", n, "final:", last.replacingOccurrences(of: "\n", with: "\\n"))
-let s6 = LanguageModelSession(model: model, instructions: "Answer briefly.")
-let outSchema = try schema(#"{"type":"object","properties":{"colors":{"type":"array","items":{"type":"string"},"minItems":3,"maxItems":3}},"required":["colors"]}"#)
-n = 0; var lastJSON = ""
-for try await snap in s6.streamResponse(to: "Name three colors.", schema: outSchema) {
-    n += 1; lastJSON = snap.rawContent.jsonString
-    if n <= 3 { print("  partial:", lastJSON) }
-}
-print("structured snapshots:", n, "final:", lastJSON)
-
-// (f) errors: context overflow
-print("\n== (f) context overflow")
-let s7 = LanguageModelSession(model: model)
-let big = String(repeating: "The quick brown fox jumps over the lazy dog. ", count: 1500)
-do { _ = try await s7.respond(to: big); print("no error?!") }
-catch let e as LanguageModelSession.GenerationError { print("GenerationError:", e) }
-catch { if #available(macOS 27, *), let e = error as? LanguageModelError { print("LanguageModelError:", e) } else { print("other:", type(of: error), error) } }
-
-// (g) cancellation
-print("\n== (g) cancellation")
-let t = Task { () -> String in
-    let s = LanguageModelSession(model: model)
-    let r = try await s.respond(to: "Write a 500 word essay about rivers.")
-    return r.content
-}
-try await Task.sleep(for: .milliseconds(300))
-t.cancel()
-let start = Date()
-switch await t.result {
-case .success(let s): print("completed anyway after \(Date().timeIntervalSince(start))s, \(s.count) chars")
-case .failure(let e): print("cancelled after \(Date().timeIntervalSince(start))s:", type(of: e), e)
-}
-print("\nDone.")
+print("\n\(failures == 0 ? "All checks passed." : "\(failures) check(s) FAILED.")")
+exit(failures == 0 ? 0 : 1)

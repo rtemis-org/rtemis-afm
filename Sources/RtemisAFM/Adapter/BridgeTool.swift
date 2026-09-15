@@ -8,10 +8,10 @@ import FoundationModels
 /// instead of running anything locally.
 ///
 /// The framework wraps it in `LanguageModelSession.ToolCallError`, which the
-/// engine catches; nothing else in the process ever sees it.
-struct ToolCallIntercepted: Error {
-    let toolName: String
-    let arguments: GeneratedContent
+/// engine catches. Public only so `afm-spike` can inspect it.
+public struct ToolCallIntercepted: Error, Sendable {
+    public let toolName: String
+    public let arguments: GeneratedContent
 }
 
 /// A `Tool` that stands in for a function the *client* will run.

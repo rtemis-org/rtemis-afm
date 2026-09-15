@@ -1,0 +1,32 @@
+# Build and test on every push and pull request.
+#
+# The bridge compiles against the macOS 27 SDK (Xcode 27), so it needs the
+# `xcode-27` runner image (public preview as of September 2026, arm64,
+# macOS 27). The GA `macos-26` image ships only Xcode 26.x, whose SDK lacks
+# `LanguageModelError`, `GenerationOptions.toolCallingMode` and friends.
+# Switch to `macos-27` once GitHub publishes it as a stable label.
+#
+# Unit tests do not touch the on-device model (the server is tested against
+# a scripted backend), so Apple Intelligence need not be on for the runner.
+# `afm-spike` is the check that does need it; run that locally.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v5
+      - name: Select Xcode 27
+        run: sudo xcode-select -s /Applications/Xcode_27.app
+      - name: Toolchain
+        run: swift --version && sw_vers
+      - name: Build
+        run: swift build --arch arm64
+      - name: Test
+        run: swift test --arch arm64

@@ -1,0 +1,110 @@
+# Release on a version tag (`v0.1.0`).
+#
+# Produces an ad-hoc-signed arm64 binary in a tarball, a SHA256SUMS file, and
+# a GitHub release carrying both; then, if a token for the Homebrew tap is
+# configured, rewrites the tap formula to point at the new tarball.
+#
+# Why ad-hoc signing is enough: Gatekeeper only inspects files that carry
+# the `com.apple.quarantine` attribute, which browsers set and `curl` and
+# Homebrew do not. The `afm.sh` installer and the tap therefore run the
+# binary without any "Apple could not verify" prompt; a browser download of
+# the tarball is the one path that needs *Open Anyway* (see README).
+#
+# Prerequisites:
+#   - the repository must be public for `afm.sh` to resolve releases through
+#     the unauthenticated GitHub API (and for free macOS minutes);
+#   - `TAP_GITHUB_TOKEN` (repo secret): a fine-grained token with contents
+#     write on `rtemis-org/homebrew-tap`, for the formula bump. Optional.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v5
+      - name: Select Xcode 27
+        run: sudo xcode-select -s /Applications/Xcode_27.app
+
+      - name: Version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # The tag must match what the binary reports.
+          grep -q "version = \"$VERSION\"" Sources/RtemisAFM/Version.swift || {
+            echo "Sources/RtemisAFM/Version.swift does not say $VERSION"; exit 1; }
+
+      - name: Test
+        run: swift test --arch arm64
+
+      - name: Build release binary
+        run: swift build -c release --arch arm64 --product rtemis-afm
+
+      - name: Sign (ad hoc) and package
+        id: package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Ask SwiftPM where it put the product: the directory differs
+          # between build backends (`.build/arm64-apple-macosx/release`
+          # for the classic one, `.build/out/Products/Release` for the
+          # SwiftBuild backend that Xcode 27's toolchain uses by default).
+          BIN="$(swift build -c release --arch arm64 --show-bin-path)/rtemis-afm"
+          # Explicit ad-hoc signature so the release does not depend on
+          # toolchain defaults. `-` is the ad-hoc identity.
+          codesign --force --sign - --timestamp=none "$BIN"
+          codesign --verify --verbose "$BIN"
+          STAGE="$(mktemp -d)/rtemis-afm-$VERSION"
+          mkdir -p "$STAGE"
+          cp "$BIN" README.md LICENSE "$STAGE/"
+          ASSET="rtemis-afm-$VERSION-macos-arm64.tar.gz"
+          tar -C "$(dirname "$STAGE")" -czf "$ASSET" "rtemis-afm-$VERSION"
+          shasum -a 256 "$ASSET" > SHA256SUMS
+          cat SHA256SUMS
+          echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(cut -d' ' -f1 SHA256SUMS)" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test the packaged binary
+        env:
+          ASSET: ${{ steps.package.outputs.asset }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          tar -xzf "$ASSET"
+          "./rtemis-afm-$VERSION/rtemis-afm" version | grep -x "$VERSION"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET: ${{ steps.package.outputs.asset }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "$ASSET" SHA256SUMS \
+            --title "rtemis-afm $GITHUB_REF_NAME" \
+            --generate-notes
+
+      - name: Bump Homebrew tap
+        if: ${{ env.TAP_GITHUB_TOKEN != '' }}
+        env:
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.package.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/rtemis-org/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          sed -e "s/{{VERSION}}/$VERSION/g" -e "s/{{SHA256}}/$SHA256/g" \
+            packaging/homebrew/rtemis-afm.rb.template > tap/Formula/rtemis-afm.rb
+          cd tap
+          git config user.name "rtemis-afm release"
+          git config user.email "noreply@rtemis.org"
+          git add Formula/rtemis-afm.rb
+          git commit -m "rtemis-afm $VERSION"
+          git push

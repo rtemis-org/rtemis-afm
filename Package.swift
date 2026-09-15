@@ -63,7 +63,8 @@ let package = Package(
         ),
         .executableTarget(
             name: "afm-spike",
-            dependencies: ["RtemisAFM"]
+            dependencies: ["RtemisAFM"],
+            exclude: ["README.md"]
         ),
         .testTarget(
             name: "RtemisAFMTests",
