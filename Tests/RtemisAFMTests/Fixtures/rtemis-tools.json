@@ -1,0 +1,375 @@
+{
+  "validate_config": {
+    "type": "object",
+    "properties": {
+      "config": {
+        "type": "object",
+        "title": "rtemis SuperConfig",
+        "description": "Language-independent config for an rtemis supervised-learning run. Mirrors the `SuperConfig` object: data references, optional preprocessing / decomposition, an algorithm with hyperparameters, optional tuning and outer resampling, and execution settings. The same config drives rtemis (R), rtemis CLI/shell, and rtemislive.",
+        "properties": {
+          "$schema": {
+            "description": "JSON Schema URI for this config instance.",
+            "type": "string",
+            "const": "https://schema.rtemis.org/supervised/v1/schema.json"
+          },
+          "outcome": {
+            "description": "Name of the outcome column. Unset follows rtemis's convention, the last column.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "features": {
+            "description": "Names of the columns to use as predictors. Unset uses every column except the outcome.",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "weights": {
+            "description": "Name of the column to use as case weights.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "positive_class": {
+            "description": "Outcome level to treat as positive (binary classification).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "preprocessor_config": {
+            "type": "object",
+            "description": "Language-independent config for the preprocessing a supervised run can fit: the preprocessing config without the operations a fitted preprocessor cannot replay at predict time (`complete_cases`, `remove_duplicates`, `remove_cases_thres`) or would learn differently in every resample (`remove_features_thres`). Those belong to `preprocessor`, applied to a dataset before training. Preprocessing configuration for predictors and outcome.",
+            "properties": {
+              "$schema": {
+                "description": "JSON Schema URI for this config instance.",
+                "type": "string",
+                "const": "https://schema.rtemis.org/supervisedpreprocessor/v1/schema.json"
+              },
+              "missingness": {
+                "description": "Add a boolean missingness indicator per feature with NAs.",
+                "type": "boolean"
+              },
+              "impute": {
+                "description": "Impute missing values.",
+                "type": "boolean"
+              },
+              "impute_type": {
+                "description": "Imputation method.",
+                "type": "string",
+                "enum": [
+                  "missRanger",
+                  "micePMM",
+                  "meanMode"
+                ]
+              },
+              "impute_missRanger_params": {
+                "description": "Parameters passed to missRanger (e.g. pmm.k, maxiter, num.trees).",
+                "type": "object"
+              },
+              "impute_discrete": {
+                "description": "Function name to impute discrete features.",
+                "type": "string"
+              },
+              "impute_continuous": {
+                "description": "Function name to impute continuous features.",
+                "type": "string"
+              },
+              "integer2factor": {
+                "description": "Convert integers to factors.",
+                "type": "boolean"
+              },
+              "integer2numeric": {
+                "description": "Convert integers to numeric.",
+                "type": "boolean"
+              },
+              "logical2factor": {
+                "description": "Convert logicals to factors.",
+                "type": "boolean"
+              },
+              "logical2numeric": {
+                "description": "Convert logicals to numeric.",
+                "type": "boolean"
+              },
+              "numeric2factor": {
+                "description": "Convert numeric to factors.",
+                "type": "boolean"
+              },
+              "numeric2factor_levels": {
+                "description": "Factor levels for numeric2factor.",
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              },
+              "numeric_cut_n": {
+                "description": "Cut numeric features into this many bins (0 = off).",
+                "type": "integer",
+                "minimum": 0
+              },
+              "numeric_cut_labels": {
+                "description": "Use labels for numeric_cut bins.",
+                "type": "boolean"
+              },
+              "numeric_quant_n": {
+                "description": "Cut numeric features into this many quantile bins (0 = off).",
+                "type": "integer",
+                "minimum": 0
+              },
+              "numeric_quant_NAonly": {
+                "description": "Quantile-cut only features with NAs.",
+                "type": "boolean"
+              },
+              "unique_len2factor": {
+                "description": "Convert features with <= this many unique values to factors (0 = off).",
+                "type": "integer",
+                "minimum": 0
+              },
+              "character2factor": {
+                "description": "Convert character features to factors.",
+                "type": "boolean"
+              },
+              "factorNA2missing": {
+                "description": "Convert factor NAs to a 'missing' level.",
+                "type": "boolean"
+              },
+              "factorNA2missing_level": {
+                "description": "Level name for factorNA2missing.",
+                "type": "string"
+              },
+              "factor2integer": {
+                "description": "Convert factors to integers.",
+                "type": "boolean"
+              },
+              "factor2integer_startat0": {
+                "description": "factor2integer starts at 0.",
+                "type": "boolean"
+              },
+              "factor2integer_levels": {
+                "description": "Per-feature factor2integer levels, keyed by feature name.",
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "minItems": 1
+                },
+                "$comment": "Data-dependent: one entry per feature, keyed by feature name, so it cannot be filled in without the data."
+              },
+              "scale": {
+                "description": "Scale features.",
+                "type": "boolean"
+              },
+              "center": {
+                "description": "Center features.",
+                "type": "boolean"
+              },
+              "scale_centers": {
+                "description": "Per-feature centering values, keyed by feature name.",
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "$comment": "Data-dependent: one entry per feature, keyed by feature name, so it cannot be filled in without the data."
+              },
+              "scale_coefficients": {
+                "description": "Per-feature scaling values, keyed by feature name.",
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "$comment": "Data-dependent: one entry per feature, keyed by feature name, so it cannot be filled in without the data."
+              },
+              "remove_constants": {
+                "description": "Remove constant features.",
+                "type": "boolean"
+              },
+              "remove_constants_skip_missing": {
+                "description": "Ignore missing values when detecting constants.",
+                "type": "boolean"
+              },
+              "remove_features": {
+                "description": "Names of features to remove.",
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              },
+              "one_hot": {
+                "description": "One-hot encode factors.",
+                "type": "boolean"
+              },
+              "one_hot_levels": {
+                "description": "Per-feature one-hot levels, keyed by feature name.",
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "minItems": 1
+                },
+                "$comment": "Data-dependent: one entry per feature, keyed by feature name, so it cannot be filled in without the data."
+              },
+              "add_date_features": {
+                "description": "Add date-derived features.",
+                "type": "boolean"
+              },
+              "date_features": {
+                "description": "Date features to add.",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "weekday",
+                    "month",
+                    "year"
+                  ]
+                },
+                "minItems": 1
+              },
+              "add_holidays": {
+                "description": "Add a holiday indicator feature.",
+                "type": "boolean"
+              },
+              "holidays": {
+                "description": "Holidays to flag, named as timeDate holiday functions.",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "exclude": {
+                "description": "Column indices to exclude from preprocessing.",
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "integer"
+                },
+                "minItems": 1
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "decomposition_config": {
+            "type": "object",
+            "description": "Language-independent config for an rtemis decomposition (dimensionality reduction). Mirrors the `DecompositionConfig` object: an algorithm name, its settings, and an optional feature subset. The same config drives rtemis (R), rtemis CLI/shell, and rtemislive to identical output. `algorithm` selects the variant and its settings are siblings of it, validated against the variant's own schema below. Anything not set takes rtemis's default, so an object holding only `algorithm` is that variant with every default. Decomposition applied before supervised learning. Call rtemis_describe_schema(\"https://schema.rtemis.org/decomposition/v1/schema.json\") for its fields."
+          },
+          "hyperparameters": {
+            "type": "object",
+            "description": "Language-independent algorithm hyperparameters: an algorithm name and its hyperparameters, validated per-algorithm against schema.rtemis.org/hyperparameters/<algorithm>/v1. `algorithm` selects the variant and its settings are siblings of it, validated against the variant's own schema below. Anything not set takes rtemis's default, so an object holding only `algorithm` is that variant with every default. One configuration, searched as the product of its values, or a named set searched as their union. Use one configuration when its settings vary independently. Call rtemis_describe_schema(\"https://schema.rtemis.org/hyperparameters/v1/schema.json\") for its fields."
+          },
+          "tuner_config": {
+            "type": "object",
+            "description": "Language-independent config for rtemis hyperparameter tuning. Mirrors the `TunerConfig` object: a tuner type and its settings. `type` selects the variant and its settings are siblings of it, validated against the variant's own schema below. Anything not set takes rtemis's default, so an object holding only `type` is that variant with every default. Hyperparameter tuning configuration. Call rtemis_describe_schema(\"https://schema.rtemis.org/tuner/v1/schema.json\") for its fields."
+          },
+          "outer_resampling_config": {
+            "type": "object",
+            "description": "Language-independent config for an rtemis resampler. Mirrors the `ResamplerConfig` object: a resampler type plus its type-specific settings. The same config drives rtemis (R), rtemis CLI/shell, and rtemislive to identical resamples. `type` selects the variant and its settings are siblings of it, validated against the variant's own schema below. Anything not set takes rtemis's default, so an object holding only `type` is that variant with every default. Outer resampling configuration for estimating predictive performance. Call rtemis_describe_schema(\"https://schema.rtemis.org/resampler/v1/schema.json\") for its fields."
+          },
+          "execution_config": {
+            "type": "object",
+            "description": "Language-independent config for rtemis execution: sequential, parallel, or distributed. `backend` selects the variant and its settings are siblings of it, validated against the variant's own schema below. Anything not set takes rtemis's default, so an object holding only `backend` is that variant with every default. Execution backend and parallel worker settings. Call rtemis_describe_schema(\"https://schema.rtemis.org/execution/v1/schema.json\") for its fields."
+          },
+          "question": {
+            "description": "User-provided label / question for the run.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outdir": {
+            "description": "Output directory for results. Unset does not write to disk.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "verbosity": {
+            "description": "Verbosity level.",
+            "type": "integer",
+            "minimum": 0
+          },
+          "dat_training_path": {
+            "description": "Path to the training data.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dat_validation_path": {
+            "description": "Path to the validation data.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dat_test_path": {
+            "description": "Path to the held-out test data.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "character2factor": {
+            "description": "Read character columns as factors. Supervised learning needs categorical predictors as factors, and a delimited file cannot say which columns those are.",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "config"
+    ],
+    "additionalProperties": false
+  },
+  "describe_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "schema_id": {
+        "type": "string",
+        "description": "The schema's $id"
+      }
+    },
+    "required": [
+      "schema_id"
+    ],
+    "additionalProperties": false
+  }
+}
