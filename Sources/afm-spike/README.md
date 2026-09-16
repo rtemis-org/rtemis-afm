@@ -30,7 +30,9 @@ every check passes.
 | E2 | Structured snapshots are partial JSON, not prefixes. | Why `response_format: json_schema` streams the final object once. |
 | F | `Response.usage` reports token counts. | `usage` on the wire. |
 | F2 | An oversized prompt throws `LanguageModelError.contextSizeExceeded`, which `ErrorMapper` turns into `400 context_length_exceeded`. The printed type matters: built for macOS 27 the framework throws `LanguageModelError`; built for 26 it threw the deprecated `GenerationError`. | Honest status codes; `ErrorMapper` handles only the new enum. |
+| F3 | The same overflow with a tool attached arrives as `GenerativeError`, a type the public interface does not declare, with the message "Provided N tokens, but the maximum allowed is M." | `ErrorMapper` matches that message so the client gets `400 context_length_exceeded` either way. If this check prints `LanguageModelError`, the framework was fixed and the message match can go. |
 | G | Task cancellation stops generation quickly. | Cancel-on-disconnect. |
+| H | An open object (`{"type": "object"}` with no `properties`) cannot be generated as structured output: with the framework's free-form `GeneratedContent.generationSchema` the macOS 27.0 model emits `{}` or the constrained decoder doubles the key quotes and fails. Asked for the object as JSON *text* in a string, it writes valid JSON every time. | `OpenValue` / `SchemaConverter`: open objects go on the wire as strings with a hint and are parsed back in the engine. If this check reports that free-form works too, the detour can go. |
 
 ## Findings on record
 
@@ -44,7 +46,14 @@ repeated thousands of times trips the *guardrails* before the context
 check; varied text produces the context-size error. With a macOS 27
 deployment target that error is `LanguageModelError.contextSizeExceeded`;
 the same binary built for macOS 26 received the deprecated
-`GenerationError.exceededContextWindowSize` instead.
+`GenerationError.exceededContextWindowSize` instead. Check H: the free-form
+schema gave `{}` twice and a decoder failure (`{""algorithm"":"glm",…}`)
+once; JSON text gave `{"algorithm": "glm", "lambda": 0.5}` three times.
+With rtemislive's full `validate_config` schema (check C2), though, the
+same model cut the text at the value's opening quote (`{"algorithm":`),
+and it did the same in longer conversations: the detour makes an open
+object *possible* on this model, not reliable. That is why rtemislive keeps
+the 8k model out of Study mode rather than compacting Study to fit it.
 
 ## Reading the SDK interface
 

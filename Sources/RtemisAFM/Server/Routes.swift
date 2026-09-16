@@ -80,7 +80,7 @@ struct ChatHandler: Sendable {
     private func respond(body: RequestBody, request: Request, context: BridgeRequestContext) async throws -> Response {
         let start = ContinuousClock.now
 
-        // Probe contract: an empty or non-JSON body is `400` before anything
+        // Probe contract (spec: rtemis-afm/wire#probe): an empty or non-JSON body is `400` before anything
         // else. rtemislive's settings indicator POSTs an empty body and
         // reads `400` as "connected" (a `403` would mean Apple's `fm serve`).
         let buffer = try await body.collect(upTo: context.maxUploadSize)

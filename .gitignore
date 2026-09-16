@@ -1,5 +1,7 @@
 # Dev
 __dev/
+AGENTS.md
+CLAUDE.md
 
 # macOS
 .DS_Store
@@ -10,7 +12,6 @@ __dev/
 
 # Zed
 .zed/
-
 
 # Swift Package Manager
 .build/

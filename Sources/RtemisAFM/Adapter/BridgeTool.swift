@@ -42,11 +42,23 @@ public struct BridgeTool: Tool {
     public let name: String
     public let description: String
     public let parameters: GenerationSchema
+    /// Where in `arguments` the model writes JSON text that must be parsed
+    /// back before the call reaches the client (see `OpenValue`).
+    public let openValues: [OpenValue]
 
-    public init(name: String, description: String, parameters: GenerationSchema) {
+    public init(name: String, description: String, parameters: GenerationSchema, openValues: [OpenValue] = []) {
         self.name = name
         self.description = description
         self.parameters = parameters
+        self.openValues = openValues
+    }
+
+    /// The model's arguments as the client should see them: the
+    /// framework's JSON with every open value parsed from its string.
+    public func wireArguments(_ arguments: GeneratedContent) -> String {
+        let raw = arguments.jsonString
+        guard !openValues.isEmpty, let json = try? JSONValue(parsing: raw) else { return raw }
+        return OpenValue.restore(json, open: openValues).jsonString
     }
 
     public func call(arguments: GeneratedContent) async throws -> String {

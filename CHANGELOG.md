@@ -8,3 +8,8 @@ SSE), tool calling with a stateless round trip, `response_format`
 CORS allowlist, generation gate, cancel on disconnect, `afm.sh` installer,
 Homebrew formula template, CI and release workflows. Requires macOS 27;
 built against macOS 27.0 / Xcode 27.0.
+
+Open objects (`{"type": "object"}` without `properties`) in tool parameters
+and structured output are generated as JSON text and parsed back, so a
+free-form settings block can carry keys instead of always being `{}`;
+`json_object` is enforced the same way (spike check H).

@@ -73,7 +73,12 @@ Notes on the chat endpoint:
   forced function all work.
 - **Structured output**: `response_format: { type: "json_schema" }` constrains
   generation to the schema. The finished object is sent once, even when
-  streaming. `json_object` adds an instruction but does not constrain.
+  streaming. `json_object` returns a JSON object too (generated as text and
+  parsed; see `OpenValues.swift` for the detour).
+- **Open objects** (`{"type": "object"}` with no `properties`, such as a
+  free-form settings block) are generated as JSON text and parsed back
+  before they reach the client, because guided generation has no "any
+  object". Clients see ordinary JSON in `tool_calls[].function.arguments`.
 - **Usage** is the framework's own token count (`Response.usage`).
 - **Errors** carry an honest status: `400 context_length_exceeded` for a
   prompt that does not fit, `400 content_filter` when guardrails fire,
@@ -82,9 +87,9 @@ Notes on the chat endpoint:
 - **Probe**: an empty `POST /v1/chat/completions` returns `400` immediately.
   rtemislive's settings indicator uses this to tell "connected" (`400`) from
   `fm serve` (`403`).
-- **Context window** is 8,192 tokens (`SystemLanguageModel.contextSize`).
-  Long tool schemas eat into it; rtemislive's small-context profile is the
-  app-side answer (milestone M4).
+- **Context window** is 8,192 tokens (`SystemLanguageModel.contextSize`),
+  reported on `/health` and `/v1/models`. rtemislive reads it and keeps a
+  model below 32k out of Study mode; Chat is unaffected.
 - **Origins**: `https://live.rtemis.org`, `http://localhost:*` and
   `http://127.0.0.1:*` are allowed by default; `--allow-origin` adds more.
   Requests from any other web page are served without CORS headers, so the

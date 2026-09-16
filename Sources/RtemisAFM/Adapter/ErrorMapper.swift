@@ -6,7 +6,7 @@ import Foundation
 import FoundationModels
 
 /// Translates errors thrown by the FoundationModels framework into
-/// `BridgeError`s with an honest HTTP status.
+/// `BridgeError`s with an honest HTTP status (spec: rtemis-afm/wire#errors).
 ///
 /// The framework's errors (macOS 27 SDK, September 2026):
 ///
@@ -72,7 +72,26 @@ public enum ErrorMapper {
             return BridgeError(status: 499, type: "server_error", code: "cancelled", message: "Request cancelled")
         }
 
-        return .serverError(describe(error))
+        // With tools attached, the macOS 27.0 framework reports an oversized
+        // transcript through an internal type (`GenerativeError`, absent
+        // from the public interface) instead of
+        // `LanguageModelError.contextSizeExceeded`; only its message says
+        // what happened (spike check F3). Matched here so the client gets
+        // the same 400 either way.
+        let message = describe(error)
+        if isContextOverflowMessage(message) {
+            return BridgeError(status: 400, type: "invalid_request_error", code: "context_length_exceeded", message: message)
+        }
+
+        // Unmapped: say which type it was, so the log and the client point
+        // at the case to add above.
+        return .serverError("\(type(of: error)): \(message)")
+    }
+
+    /// "Provided 8,226 tokens, but the maximum allowed is 8,192." — the
+    /// internal error's wording on macOS 27.0.
+    static func isContextOverflowMessage(_ message: String) -> Bool {
+        message.contains("tokens, but the maximum allowed is")
     }
 
     /// Generation failures.

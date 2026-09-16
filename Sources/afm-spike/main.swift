@@ -237,6 +237,27 @@ await check("F2", "An oversized prompt is reported as a context-size error (mapp
     }
 }
 
+await check("F3", "The same overflow with a tool attached is reported through a different (internal) type, still mapped to 400") {
+    var words: [String] = []
+    var seed: UInt64 = 42
+    for _ in 0..<9000 {
+        seed = seed &* 6364136223846793005 &+ 1442695040888963407
+        words.append("w\(seed % 100_000)")
+    }
+    let echo = BridgeTool(name: "echo", description: "Echo text.", parameters: try schema(weatherSchema, name: "echo"))
+    let session = LanguageModelSession(model: model, tools: [echo])
+    do {
+        _ = try await session.respond(to: "Summarize: " + words.joined(separator: " "))
+        throw SpikeFailure("no error for a ~9k-word prompt")
+    } catch {
+        let mapped = ErrorMapper.map(error)
+        guard mapped.code == "context_length_exceeded" else { throw SpikeFailure("mapped to \(mapped.status) \(mapped.code ?? "-"): \(mapped.message)") }
+        // On macOS 27.0 this is `GenerativeError`, which the public
+        // interface does not declare; `ErrorMapper` knows it by its message.
+        return "\(type(of: error)) → \(mapped.status) \(mapped.code!)"
+    }
+}
+
 // MARK: - G. Cancellation
 
 await check("G", "Cancelling the task stops generation promptly") {
@@ -254,6 +275,53 @@ await check("G", "Cancelling the task stops generation promptly") {
         guard elapsed < .seconds(2) else { throw SpikeFailure("took \(elapsed) to stop") }
         return "\(type(of: error)) after \(elapsed)"
     }
+}
+
+// MARK: - H. Open objects
+
+// An open object (`{"type": "object"}` with no `properties`) has no guided
+// generation form. This check compares the candidate encodings on the real
+// model, three runs each, and reports what came out. The bridge uses the
+// one that works (`OpenValue`); if the free-form one starts working in a
+// later SDK, the converter can switch back to it.
+await check("H", "An open object is best generated as JSON text (free-form GeneratedContent misbehaves)") {
+    func run(_ hyperparameters: DynamicGenerationSchema, hint: String) async -> [String] {
+        let config = DynamicGenerationSchema(name: "config", properties: [
+            .init(name: "outcome", description: "Outcome column", schema: DynamicGenerationSchema(type: String.self)),
+            .init(name: "hyperparameters", description: "The algorithm and its settings. " + hint, schema: hyperparameters),
+        ])
+        let root = DynamicGenerationSchema(name: "args", properties: [.init(name: "config", schema: config)])
+        var out: [String] = []
+        for _ in 1...3 {
+            do {
+                let tool = BridgeTool(name: "validate_config", description: "Validate a config.", parameters: try GenerationSchema(root: root, dependencies: []))
+                let session = LanguageModelSession(model: model, tools: [tool])
+                _ = try await session.respond(to: "Validate a config with outcome Death, algorithm glm with lambda 0.5. Call the tool.")
+                out.append("no call")
+            } catch let error as LanguageModelSession.ToolCallError {
+                let intercepted = error.underlyingError as! ToolCallIntercepted
+                out.append(intercepted.arguments.jsonString)
+            } catch {
+                out.append("error: \(String(describing: error).prefix(80))")
+            }
+        }
+        return out
+    }
+    let freeForm = await run(DynamicGenerationSchema(type: GeneratedContent.self), hint: "A JSON object with an \"algorithm\" key.")
+    let asText = await run(DynamicGenerationSchema(type: String.self), hint: OpenValue.hint(for: .object, inArray: false))
+    // For the record: a list of `key: value` strings, the other encoding
+    // considered. Fine here; in a long context the model wrote bare values.
+    let asEntries = await run(DynamicGenerationSchema(arrayOf: DynamicGenerationSchema(type: String.self)), hint: "Write it as a list of strings, one setting per string as key: value.")
+    let textWorks = asText.allSatisfy { $0.contains("algorithm") && $0.contains("0.5") && !$0.hasPrefix("error") }
+    let freeFormWorks = freeForm.allSatisfy { $0.contains("\"algorithm\":") && !$0.hasPrefix("error") }
+    print("  free-form: \(freeForm)")
+    print("  as text:   \(asText)")
+    print("  entries:   \(asEntries)")
+    guard textWorks else { throw SpikeFailure("JSON text did not carry the algorithm and lambda in every run") }
+    if freeFormWorks {
+        return "free-form works now too — consider mapping open objects to GeneratedContent.generationSchema instead (see OpenValues.swift)"
+    }
+    return "JSON text 3/3; free-form does not (as expected on macOS 27.0)"
 }
 
 // MARK: - Summary

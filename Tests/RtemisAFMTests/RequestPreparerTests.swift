@@ -97,7 +97,10 @@ final class RequestPreparerTests: XCTestCase {
 
         let jsonObject = try decodeRequest(#"{"model":"afm","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_object"}}"#)
         let objectPrepared = try RequestPreparer.prepare(jsonObject)
-        XCTAssertNil(objectPrepared.responseSchema)
+        // `json_object` is generated as one string and parsed back at the
+        // root (see `OpenValue`), with the instructions asking for an object.
+        XCTAssertEqual(try encoded(objectPrepared.responseSchema!)["type"]?.stringValue, "string")
+        XCTAssertEqual(objectPrepared.responseOpenValues, [OpenValue(path: ValuePath(), kind: .object)])
         XCTAssertTrue(objectPrepared.instructionsText.contains("JSON object"))
 
         let missing = try decodeRequest(#"{"model":"afm","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_schema"}}"#)

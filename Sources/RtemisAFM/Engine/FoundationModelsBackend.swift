@@ -111,7 +111,7 @@ public final class FoundationModelsBackend: ChatBackend {
                     usage = Self.usage(from: snapshot.usage)
                 }
                 if let final {
-                    producedText = final.jsonString
+                    producedText = Self.wireContent(final, open: prepared.responseOpenValues)
                     continuation.yield(.contentDelta(producedText))
                 }
             } else {
@@ -132,7 +132,7 @@ public final class FoundationModelsBackend: ChatBackend {
             }
         } catch let error as LanguageModelSession.ToolCallError where error.underlyingError is ToolCallIntercepted {
             let intercepted = error.underlyingError as! ToolCallIntercepted
-            let calls = toolCalls(from: session, fallback: intercepted)
+            let calls = toolCalls(from: session, tools: prepared.tools, fallback: intercepted)
             continuation.yield(.toolCalls(calls))
             continuation.yield(.finished(.toolCalls, Self.usage(from: session.usage)))
             return
@@ -171,7 +171,13 @@ public final class FoundationModelsBackend: ChatBackend {
     /// several at once (the first `BridgeTool` to throw ends the turn, but
     /// the entry was written before any tool ran). The intercepted call is
     /// the fallback should the entry ever be missing.
-    private func toolCalls(from session: LanguageModelSession, fallback: ToolCallIntercepted) -> [ToolCallOutput] {
+    private func toolCalls(from session: LanguageModelSession, tools: [BridgeTool], fallback: ToolCallIntercepted) -> [ToolCallOutput] {
+        // Arguments go through the tool's `wireArguments`, which parses the
+        // JSON text the model wrote for open objects back into JSON.
+        let byName = Dictionary(tools.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        func arguments(_ name: String, _ content: GeneratedContent) -> String {
+            byName[name]?.wireArguments(content) ?? content.jsonString
+        }
         for entry in session.transcript.reversed() {
             if case .toolCalls(let calls) = entry, !calls.isEmpty {
                 return calls.enumerated().map { index, call in
@@ -179,12 +185,29 @@ public final class FoundationModelsBackend: ChatBackend {
                         index: index,
                         id: call.id.isEmpty ? makeToolCallID() : call.id,
                         name: call.toolName,
-                        arguments: call.arguments.jsonString
+                        arguments: arguments(call.toolName, call.arguments)
                     )
                 }
             }
         }
-        return [ToolCallOutput(index: 0, id: makeToolCallID(), name: fallback.toolName, arguments: fallback.arguments.jsonString)]
+        return [ToolCallOutput(index: 0, id: makeToolCallID(), name: fallback.toolName, arguments: arguments(fallback.toolName, fallback.arguments))]
+    }
+
+    // MARK: - Structured output
+
+    /// A structured response as the client should see it, with open values
+    /// parsed from their JSON text. When the root itself was open
+    /// (`json_object`) and the model wrote something that is not a JSON
+    /// object, the text is returned as it was written rather than as a
+    /// JSON string literal, so the client sees what the model said.
+    static func wireContent(_ content: GeneratedContent, open: [OpenValue]) -> String {
+        let raw = content.jsonString
+        guard !open.isEmpty, let json = try? JSONValue(parsing: raw) else { return raw }
+        let restored = OpenValue.restore(json, open: open)
+        if open.contains(where: { $0.path.isRoot }), let text = restored.stringValue {
+            return text
+        }
+        return restored.jsonString
     }
 
     // MARK: - Usage

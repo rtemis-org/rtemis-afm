@@ -128,10 +128,100 @@ final class SchemaConverterTests: XCTestCase {
         XCTAssertThrowsError(try SchemaConverter.convert(["type": "banana"], name: "t"))
     }
 
+    /// An object with no `properties` becomes JSON text in a string, with
+    /// the hint on the property that holds it, and its path is recorded so
+    /// the engine can parse it back. Arrays of open objects record one path
+    /// that covers every element.
+    func testOpenObjectsBecomeJSONText() throws {
+        let schema: JSONValue = [
+            "type": "object",
+            "properties": [
+                "config": [
+                    "type": "object",
+                    "properties": [
+                        "outcome": ["type": "string"],
+                        "hyperparameters": ["type": "object", "description": "The learner."],
+                        "closed": ["type": "object", "additionalProperties": false],
+                    ],
+                ],
+                "configs": ["type": "array", "items": ["type": "object"]],
+                "anything": true,
+            ],
+        ]
+        let result = try SchemaConverter.convert(schema, name: "validate")
+        XCTAssertEqual(
+            result.openValues.sorted { $0.path.description < $1.path.description },
+            [
+                OpenValue(path: ValuePath([.key("anything")]), kind: .any),
+                OpenValue(path: ValuePath([.key("config"), .key("hyperparameters")]), kind: .object),
+                OpenValue(path: ValuePath([.key("configs"), .element]), kind: .object),
+            ]
+        )
+        let json = try encoded(result.schema)
+        let hp = try XCTUnwrap(json["properties"]?["config"]?["properties"]?["hyperparameters"])
+        XCTAssertEqual(hp["type"]?.stringValue, "string")
+        XCTAssertEqual(hp["description"]?.stringValue, "The learner. " + OpenValue.hint(for: .object, inArray: false))
+        XCTAssertEqual(json["properties"]?["configs"]?["description"]?.stringValue, OpenValue.hint(for: .object, inArray: true))
+        // A closed empty object stays an object: `{}` is all it admits.
+        XCTAssertEqual(json["properties"]?["config"]?["properties"]?["closed"]?["type"]?.stringValue, "object")
+        XCTAssertEqual(json["properties"]?["anything"]?["type"]?.stringValue, "string")
+        XCTAssertEqual(json["properties"]?["anything"]?["description"]?.stringValue, OpenValue.hint(for: .any, inArray: false))
+    }
+
+    /// Open values inside a definition are recorded at every `$ref` site.
+    func testOpenObjectsInsideDefinitions() throws {
+        let schema: JSONValue = [
+            "type": "object",
+            "properties": [
+                "first": ["$ref": "#/$defs/config"],
+                "rest": ["type": "array", "items": ["$ref": "#/$defs/config"]],
+            ],
+            "$defs": [
+                "config": ["type": "object", "properties": ["settings": ["type": "object"]]]
+            ],
+        ]
+        let result = try SchemaConverter.convert(schema, name: "plan")
+        XCTAssertEqual(
+            result.openValues.map(\.path.description).sorted(),
+            ["$.first.settings", "$.rest[].settings"]
+        )
+    }
+
+    func testRestoreParsesJSONText() throws {
+        let generated: JSONValue = [
+            "config": ["outcome": "Death", "hyperparameters": "{\"algorithm\": \"glm\", \"lambda\": 0.5}"],
+            "configs": ["{\"a\": 1}", "not json", "[1, 2]", ""],
+            "anything": "42",
+            "blank": " ",
+            "quoted": "{'a': 'x y', 'n': 1}",
+        ]
+        let open = [
+            OpenValue(path: ValuePath([.key("config"), .key("hyperparameters")]), kind: .object),
+            OpenValue(path: ValuePath([.key("configs"), .element]), kind: .object),
+            OpenValue(path: ValuePath([.key("anything")]), kind: .any),
+            OpenValue(path: ValuePath([.key("missing")]), kind: .object),
+            OpenValue(path: ValuePath([.key("blank")]), kind: .object),
+            OpenValue(path: ValuePath([.key("quoted")]), kind: .object),
+        ]
+        let restored = OpenValue.restore(generated, open: open)
+        XCTAssertEqual(restored["config"]?["hyperparameters"], ["algorithm": "glm", "lambda": 0.5])
+        // Text that is not a JSON object stays as written for `.object`;
+        // `.any` takes whatever parses; an empty string is removed.
+        XCTAssertEqual(restored["configs"], [["a": 1], "not json", "[1, 2]"])
+        XCTAssertEqual(restored["anything"], 42)
+        XCTAssertNil(restored["missing"])
+        XCTAssertNil(restored["blank"])
+        // Single-quoted JSON text is read as JSON.
+        XCTAssertEqual(restored["quoted"], ["a": "x y", "n": 1])
+    }
+
+    /// `"properties": {}` is a tool with no arguments, not an open object.
     func testNoParametersIsEmptyObject() throws {
-        let json = try encoded(try SchemaConverter.convert(["type": "object", "properties": [:]], name: "noop").schema)
+        let result = try SchemaConverter.convert(["type": "object", "properties": [:]], name: "noop")
+        let json = try encoded(result.schema)
         XCTAssertEqual(json["type"]?.stringValue, "object")
         XCTAssertEqual(json["properties"], [:])
+        XCTAssertTrue(result.openValues.isEmpty)
     }
 
     /// rtemislive's real tool schemas (dumped from `boundedSchema` on the
@@ -147,6 +237,11 @@ final class SchemaConverterTests: XCTestCase {
                 let config = try XCTUnwrap(json["properties"]?["config"])
                 XCTAssertNotNil(config["properties"]?["outcome"])
                 XCTAssertNotNil(config["properties"]?["preprocessor_config"]?["properties"]?["impute"])
+                // The six family placeholders are open objects: JSON text
+                // the engine parses back. Without this the model could
+                // never name an algorithm (`hyperparameters` would be `{}`).
+                XCTAssertTrue(result.openValues.contains(OpenValue(path: ValuePath([.key("config"), .key("hyperparameters")]), kind: .object)))
+                XCTAssertEqual(config["properties"]?["hyperparameters"]?["type"]?.stringValue, "string")
                 // Every warning names a keyword the converter chose to skip;
                 // none may be about a shape it failed to understand.
                 for warning in result.warnings {

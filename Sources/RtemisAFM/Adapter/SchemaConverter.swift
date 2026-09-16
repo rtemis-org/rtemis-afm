@@ -20,6 +20,7 @@ import FoundationModels
 /// | JSON Schema                         | Result                                     |
 /// |-------------------------------------|--------------------------------------------|
 /// | `object` + `properties`/`required`  | named object; unlisted properties optional |
+/// | `object`, no `properties` keyword   | JSON text in a string (see `OpenValue`)    |
 /// | `array` + `items`, `min/maxItems`   | `arrayOf`                                  |
 /// | `string`, `enum`, `const`           | `String`, or a named choice list           |
 /// | `number`, `integer`, `min/maximum`  | `Double` / `Int` with range guides         |
@@ -40,10 +41,13 @@ import FoundationModels
 /// `FoundationModels.swiftinterface`). `pattern` could map to
 /// `GenerationGuide.pattern(Regex)` once the regex dialects are reconciled.
 public struct SchemaConverter {
-    /// A converted schema plus the keywords that had to be ignored.
+    /// A converted schema, the keywords that had to be ignored, and the
+    /// places where the model will write JSON text that the engine must
+    /// parse back (`OpenValue.restore`).
     public struct Result {
         public var schema: GenerationSchema
         public var warnings: [String]
+        public var openValues: [OpenValue]
     }
 
     public struct SchemaConversionError: Error, CustomStringConvertible, Equatable {
@@ -59,7 +63,7 @@ public struct SchemaConverter {
         // Definitions referenced by name are collected while walking; the
         // framework resolves `referenceTo` against this list.
         let schema = try GenerationSchema(root: root, dependencies: Array(converter.dependencies.values))
-        return Result(schema: schema, warnings: converter.warnings)
+        return Result(schema: schema, warnings: converter.warnings, openValues: converter.openValues)
     }
 
     // MARK: - State
@@ -71,6 +75,15 @@ public struct SchemaConverter {
     /// Definitions currently being converted — a cycle guard for inlining.
     private var inlining: Set<String> = []
     private var warnings: [String] = []
+    /// Where in the generated *value* the node being converted sits. The
+    /// diagnostic `path` strings follow the schema document instead
+    /// (`$/properties/x/items`), which is not where a value lives.
+    private var valuePath = ValuePath()
+    /// Open values found so far, at absolute value paths.
+    private var openValues: [OpenValue] = []
+    /// Open values inside each registered definition, at paths relative
+    /// to the definition's root, so every `$ref` site can record its own.
+    private var definitionOpenValues: [String: [OpenValue]] = [:]
 
     private init(definitions: [String: JSONValue]) {
         self.definitions = definitions
@@ -97,7 +110,8 @@ public struct SchemaConverter {
             // `true` / `{}` mean "anything". There is no "anything" in guided
             // generation; a free string is the least constraining choice.
             if node.boolValue == true || node.isNull {
-                warn(path, "unconstrained schema; using string")
+                warn(path, "unconstrained schema; using JSON text in a string")
+                openValues.append(OpenValue(path: valuePath, kind: .any))
                 return DynamicGenerationSchema(type: String.self)
             }
             throw SchemaConversionError(path: path, reason: "schema must be an object")
@@ -203,6 +217,17 @@ public struct SchemaConverter {
         let properties = object["properties"]?.objectValue ?? [:]
         let required = object["required"]?.arrayValue?.compactMap { $0.stringValue } ?? []
 
+        // An object with no `properties` keyword that does not forbid extra
+        // ones is "any object". Guided generation cannot express that (it
+        // would only ever produce `{}`), so the model is asked for JSON text
+        // and the engine parses it back; see `OpenValue`. An explicit empty
+        // `properties` is left alone: that is how a tool with no arguments
+        // is declared, and `{}` is the right value for it.
+        if object["properties"] == nil, object["additionalProperties"]?.boolValue != false {
+            openValues.append(OpenValue(path: valuePath, kind: .object))
+            return DynamicGenerationSchema(type: String.self)
+        }
+
         // JSON objects are unordered once parsed, but property order affects
         // how the model generates. Required properties keep the order the
         // schema listed them in; the rest follow alphabetically.
@@ -216,11 +241,17 @@ public struct SchemaConverter {
             // Nested named schemas need unique names across the whole
             // document, so children are named by their path.
             let childName = "\(name)_\(key)"
+            valuePath = valuePath.appending(.key(key))
             let schema = try convert(node, name: childName, path: childPath)
+            // A scalar schema carries no description of its own, so the
+            // "write JSON text" hint goes on the property that holds it.
+            let description = [node["description"]?.stringValue, openHint(under: valuePath)]
+                .compactMap { $0 }.joined(separator: " ")
+            valuePath.steps.removeLast()
             let nullable = Self.isNullable(node) || node["nullable"]?.boolValue == true
             out.append(DynamicGenerationSchema.Property(
                 name: key,
-                description: node["description"]?.stringValue,
+                description: description.isEmpty ? nil : description,
                 schema: schema,
                 isOptional: !required.contains(key) || nullable
             ))
@@ -231,7 +262,9 @@ public struct SchemaConverter {
     private mutating func convertArray(_ object: [String: JSONValue], name: String, path: String) throws -> DynamicGenerationSchema {
         let items: DynamicGenerationSchema
         if let itemsNode = object["items"] {
+            valuePath = valuePath.appending(.element)
             items = try convert(itemsNode, name: "\(name)_item", path: path + "/items")
+            valuePath.steps.removeLast()
         } else {
             warn(path, "array without items; using string items")
             items = DynamicGenerationSchema(type: String.self)
@@ -288,17 +321,36 @@ public struct SchemaConverter {
         }
         let name = "def_" + defName.replacingOccurrences(of: "/", with: "_")
 
-        if dependencies[name] != nil || inlining.contains(name) {
-            // Already registered, or being registered further up the stack
-            // (recursion): a reference by name is what the framework wants.
+        if let relative = definitionOpenValues[name] {
+            // Already registered: a reference by name is what the framework
+            // wants, and the definition's open values recur at this site.
+            openValues += relative.map { OpenValue(path: valuePath.appending($0.path), kind: $0.kind) }
+            return DynamicGenerationSchema(referenceTo: name)
+        }
+        if inlining.contains(name) {
+            // Being registered further up the stack (recursion). Open values
+            // nested through the cycle would need unbounded paths, so they
+            // are not restored; the model still generates for them.
+            warn(path, "open values inside the recursive definition \"\(defName)\" are not parsed back")
             return DynamicGenerationSchema(referenceTo: name)
         }
 
+        // Convert the definition with a fresh value path, so the open values
+        // it contains come out relative to its root and can be recorded at
+        // every site that references it.
         inlining.insert(name)
+        let outerPath = valuePath
+        let outerOpen = openValues
+        valuePath = ValuePath()
+        openValues = []
         defer { inlining.remove(name) }
         let converted = try convert(definition, name: name, path: "#/$defs/\(defName)")
+        let relative = openValues
+        valuePath = outerPath
+        openValues = outerOpen + relative.map { OpenValue(path: outerPath.appending($0.path), kind: $0.kind) }
 
         if Self.isNameable(definition) {
+            definitionOpenValues[name] = relative
             dependencies[name] = converted
             return DynamicGenerationSchema(referenceTo: name)
         }
@@ -306,16 +358,29 @@ public struct SchemaConverter {
     }
 
     /// Whether converting `node` yields a schema that carries a name (and can
-    /// therefore be referenced): objects and choice lists do; scalars and
-    /// arrays do not.
+    /// therefore be referenced): objects and choice lists do; scalars,
+    /// arrays and open objects (which become strings) do not.
     private static func isNameable(_ node: JSONValue) -> Bool {
         guard let object = node.objectValue else { return false }
         if object["anyOf"] != nil || object["oneOf"] != nil || object["enum"] != nil || object["const"] != nil { return true }
         let types = types(of: object).filter { $0 != "null" }
-        return types == ["object"] || (types.isEmpty && object["properties"] != nil)
+        guard types == ["object"] || (types.isEmpty && object["properties"] != nil) else { return false }
+        return object["properties"] != nil || object["additionalProperties"]?.boolValue == false
     }
 
     // MARK: - Helpers
+
+    /// The hint for a property at `path` whose value — or whose array
+    /// items, at any depth — is an open value; `nil` when none is.
+    private func openHint(under path: ValuePath) -> String? {
+        for open in openValues where open.path.steps.starts(with: path.steps) {
+            let tail = open.path.steps.dropFirst(path.steps.count)
+            if tail.allSatisfy({ $0 == .element }) {
+                return OpenValue.hint(for: open.kind, inArray: !tail.isEmpty)
+            }
+        }
+        return nil
+    }
 
     /// The `type` keyword normalized to a list.
     private static func types(of object: [String: JSONValue]) -> [String] {

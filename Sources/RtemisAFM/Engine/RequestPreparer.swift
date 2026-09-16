@@ -12,8 +12,13 @@ public struct PreparedChat: Sendable {
     public var prompt: String
     public var tools: [BridgeTool]
     public var options: GenerationOptions
-    /// Set for `response_format: json_schema`; the model is constrained to it.
+    /// Set for `response_format: json_schema` and `json_object`; the model
+    /// is constrained to it.
     public var responseSchema: GenerationSchema?
+    /// Where in the structured response the model writes JSON text that
+    /// must be parsed back (see `OpenValue`). For `json_object` this is the
+    /// root: the whole response is one JSON string to unwrap.
+    public var responseOpenValues: [OpenValue] = []
     /// Schema-conversion warnings, for the verbose log.
     public var warnings: [String]
     /// Text of the instructions, for logging and diagnostics.
@@ -62,16 +67,25 @@ public enum RequestPreparer {
 
         // --- Response format ---------------------------------------------
         var responseSchema: GenerationSchema?
+        var responseOpenValues: [OpenValue] = []
         var extraInstructions: String?
         if let format = request.responseFormat {
             switch format.type {
             case "text", "":
                 break
             case "json_object":
-                // No schema to constrain to; ask for JSON in the instructions.
-                // (A `DynamicGenerationSchema` with no properties would only
-                // ever produce `{}`.)
+                // No schema to constrain to, and an object schema with no
+                // properties would only ever produce `{}`. The response is
+                // instead generated as one string that the engine parses
+                // (the same detour open objects take; see `OpenValue`), with
+                // the instructions saying what to put in it.
                 extraInstructions = "Respond with a single JSON object and nothing else."
+                do {
+                    responseSchema = try GenerationSchema(root: DynamicGenerationSchema(type: String.self), dependencies: [])
+                } catch {
+                    throw ErrorMapper.map(error)
+                }
+                responseOpenValues = [OpenValue(path: ValuePath(), kind: .object)]
             case "json_schema":
                 guard let spec = format.jsonSchema, let schema = spec.schema else {
                     throw .invalidRequest("response_format.json_schema.schema is required", code: "invalid_response_format")
@@ -79,6 +93,7 @@ public enum RequestPreparer {
                 do {
                     let converted = try SchemaConverter.convert(schema, name: spec.name ?? "response")
                     responseSchema = converted.schema
+                    responseOpenValues = converted.openValues
                     warnings += converted.warnings.map { "response_format: \($0)" }
                 } catch let error as SchemaConverter.SchemaConversionError {
                     throw .invalidRequest("unsupported schema in response_format: \(error)", code: "unsupported_schema")
@@ -107,6 +122,7 @@ public enum RequestPreparer {
             tools: tools,
             options: options,
             responseSchema: responseSchema,
+            responseOpenValues: responseOpenValues,
             warnings: warnings,
             instructionsText: built.instructionsText
         )
@@ -133,7 +149,8 @@ public enum RequestPreparer {
                 tools.append(BridgeTool(
                     name: function.name,
                     description: function.description ?? "",
-                    parameters: converted.schema
+                    parameters: converted.schema,
+                    openValues: converted.openValues
                 ))
             } catch let error as SchemaConverter.SchemaConversionError {
                 throw .invalidRequest("unsupported schema for tool \"\(function.name)\": \(error)", code: "unsupported_schema")

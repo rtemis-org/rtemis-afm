@@ -34,7 +34,22 @@ final class ErrorMapperTests: XCTestCase {
         let own = BridgeError.unsupported("nope")
         XCTAssertEqual(ErrorMapper.map(own), own)
         struct Odd: Error {}
-        XCTAssertEqual(ErrorMapper.map(Odd()).status, 500)
+        let odd = ErrorMapper.map(Odd())
+        XCTAssertEqual(odd.status, 500)
+        // The type name is in the message, so an unmapped error can be found.
+        XCTAssertTrue(odd.message.hasPrefix("Odd"), odd.message)
         XCTAssertEqual(ErrorMapper.map(CancellationError()).code, "cancelled")
+    }
+
+    /// The framework's internal error for an oversized transcript when tools
+    /// are attached (macOS 27.0) is recognized by its message.
+    func testInternalContextOverflowIsA400() {
+        struct GenerativeError: LocalizedError {
+            var errorDescription: String? { "Provided 8,226 tokens, but the maximum allowed is 8,192." }
+        }
+        let mapped = ErrorMapper.map(GenerativeError())
+        XCTAssertEqual(mapped.status, 400)
+        XCTAssertEqual(mapped.code, "context_length_exceeded")
+        XCTAssertEqual(mapped.message, "Provided 8,226 tokens, but the maximum allowed is 8,192.")
     }
 }

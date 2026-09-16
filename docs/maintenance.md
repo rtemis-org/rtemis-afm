@@ -37,6 +37,14 @@ rtemislive `devel` — 15 September 2026.**
 and handles only the new enum. If the floor ever drops back, the old enum
 needs a mapping again.
 
+**Context overflow with tools.** With tools attached, the macOS 27.0
+framework reports an oversized transcript through `GenerativeError`, an
+internal type absent from the public interface, instead of
+`LanguageModelError.contextSizeExceeded`. `ErrorMapper` recognizes its
+message ("Provided N tokens, but the maximum allowed is M") and maps it to
+`400 context_length_exceeded`; spike check F3 prints the type. If a later
+SDK throws the public error there too, the message match becomes dead code.
+
 **Schemas.** `GenerationSchema` is `Codable`, but decodes only its own
 dialect (`title` and `x-order` required; no `type: [..]`). If a future SDK
 accepts plain JSON Schema, `SchemaConverter` can shrink to a passthrough
@@ -44,6 +52,27 @@ with a fallback. Keywords currently ignored (`pattern`, `format`,
 `additionalProperties: {…}`, `allOf` with several members, `if`/`then`) are
 candidates as `DynamicGenerationSchema` gains initializers;
 `GenerationGuide.pattern(Regex)` already exists for strings.
+
+**Open objects.** A schema `{"type": "object"}` with no `properties` (how
+rtemislive's config tools declare their free-form `hyperparameters` block)
+has no guided-generation form: `DynamicGenerationSchema` needs properties,
+and the framework's free-form `GeneratedContent.generationSchema` ("Any
+legal JSON") misbehaves on macOS 27.0 — the model emits `{}` or the
+constrained decoder doubles the key quotes and fails. The bridge therefore
+asks for such values as JSON *text* in a string and parses them back
+(`OpenValue`, `SchemaConverter`, `BridgeTool.wireArguments`,
+`FoundationModelsBackend.wireContent`). `json_object` uses the same path with
+the root as the open value. Spike check H compares both encodings on the
+real model; when it reports that free-form generation works, the converter
+can map open objects to `GeneratedContent.generationSchema` and the detour
+can go. The hint text (`OpenValue.hint`) carries no example on purpose: the
+model copies an example's keys.
+
+**Context options.** `streamResponse` takes a `ContextOptions` (macOS 27)
+with `includeSchemaInPrompt` and `reasoningLevel` (`.light`/`.moderate`/
+`.deep`). The bridge leaves both at their defaults. `includeSchemaInPrompt:
+false` might reduce the prompt cost of structured output; worth measuring
+against `usage.prompt_tokens` before adopting it.
 
 **Tool calling.** Reading all parallel calls from `session.transcript`
 depends on `transcriptErrorHandlingPolicy = .preserveTranscript` keeping
@@ -53,10 +82,15 @@ a release changes that, the fallback is the single intercepted call.
 functions rely on.
 
 **Context window.** `SystemLanguageModel.contextSize` reports 8192 on
-macOS 27.0. If Apple raises it
-(or exposes a larger variant — `SystemLanguageModel.Variant` exists now),
-`/v1/models` picks it up automatically; rtemislive's small-context profile
-should read the value rather than assume 8k.
+macOS 27.0. If Apple raises it (or exposes a larger variant —
+`SystemLanguageModel.Variant` exists now), `/v1/models` picks it up
+automatically. rtemislive reads `context_window` from there and keeps a
+model below 32k out of Study mode (Chat is unaffected); a larger on-device
+model passes that gate with no change on either side. The 32k figure comes
+from measuring a Study round trip on this bridge (~15k tokens with the full
+tool set), and the 8k model was also tried with compacted schemas and
+digested tool results: a 3B model still could not fill a config through
+them reliably, which is why the app gates rather than compacts.
 
 **Vision.** The macOS 27 model accepts image attachments
 (`Transcript.Segment.attachment`). The bridge rejects `image_url` parts with
@@ -129,7 +163,9 @@ reference for `TranscriptBuilder`; if Apple ever ships the forward direction
 ## Known limitations (v0.1)
 
 - Text only: no images in either direction.
-- `json_object` asks for JSON but cannot enforce it (no schema to constrain to).
+- `json_object` is enforced by generating one string and parsing it; if the
+  model writes something that is not a JSON object, that text is returned
+  as it was written.
 - `finish_reason: "length"` is inferred from the token cap, not reported by
   the framework.
 - Guardrails fire on odd inputs (a phrase repeated thousands of times), and
