@@ -1,6 +1,7 @@
 # Homebrew formula for rtemis-afm — template.
 #
-# The release workflow fills in {{VERSION}} and {{SHA256}} and commits the
+# The release workflow fills in {{VERSION}} (in the URL; Homebrew reads the
+# formula version from the tarball name) and {{SHA256}}, and commits the
 # result as `Formula/rtemis-afm.rb` in the `rtemis-org/homebrew-tap`
 # repository, so that `brew install rtemis-org/tap/rtemis-afm` works.
 #
@@ -11,7 +12,6 @@ class RtemisAfm < Formula
   homepage "https://github.com/rtemis-org/rtemis-afm"
   url "https://github.com/rtemis-org/rtemis-afm/releases/download/v{{VERSION}}/rtemis-afm-{{VERSION}}-macos-arm64.tar.gz"
   sha256 "{{SHA256}}"
-  version "{{VERSION}}"
   license "BSD-3-Clause"
 
   # Apple silicon only, macOS 27 (Homebrew codename "Golden Gate") or later.
@@ -33,6 +33,6 @@ class RtemisAfm < Formula
   end
 
   test do
-    assert_equal "{{VERSION}}", shell_output("#{bin}/rtemis-afm version").strip
+    assert_equal version.to_s, shell_output("#{bin}/rtemis-afm version").strip
   end
 end

@@ -145,16 +145,20 @@ reference for `TranscriptBuilder`; if Apple ever ships the forward direction
   macOS 27, arm64). The GA `macos-26` image has only Xcode 26.x, whose SDK
   cannot compile this package. Move to `macos-27` when it becomes a stable
   label.
-- The repository is private at the time of writing. `afm.sh` resolves the
-  latest release through the unauthenticated GitHub API and downloads
-  release assets, which needs a **public** repository (as does free macOS
-  CI). Make it public before the first release.
+- The repository is public (since 2026-09-15). Keep it so: `afm.sh`
+  resolves the latest release through the unauthenticated GitHub API and
+  downloads release assets, and free macOS CI minutes depend on it too.
 - The tap is `rtemis-org/homebrew-tap` (public; created 2026-09-15), install
   line `brew install rtemis-org/tap/rtemis-afm`. It holds only a README until
   the first release; the release workflow writes `Formula/rtemis-afm.rb`
   and needs the `TAP_GITHUB_TOKEN` secret (fine-grained PAT, Contents:
   write on the tap) to push there. After the first release, run
   `brew audit --strict --online rtemis-org/tap/rtemis-afm` once.
+- The formula's `depends_on macos: :golden_gate` is Homebrew's codename for
+  macOS 27 (checked against Homebrew 7.0.2, `Library/Homebrew/macos_version.rb`).
+  If the minimum macOS ever changes, change the codename with it. The formula
+  has no `version` line on purpose: Homebrew reads `0.1.0` from the tarball
+  name, and `brew audit --strict` rejects an explicit one as redundant.
 - `scripts/afm.sh` is the source; copy it to rtemislive's `public/afm.sh` on
   every change (the Help page links to the deployed URL).
 - Bump `Sources/RtemisAFM/Version.swift` and `CHANGELOG.md` before tagging;
