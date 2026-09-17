@@ -40,6 +40,7 @@ final class ServerTests: XCTestCase {
                 let json = try JSONValue(parsing: String(buffer: response.body))
                 XCTAssertEqual(json["status"]?.stringValue, "ok")
                 XCTAssertEqual(json["version"]?.stringValue, RtemisAFM.version)
+                XCTAssertEqual(json["model"]?["name"]?.stringValue, "AFM Test")
                 XCTAssertEqual(json["model"]?["availability"]?.stringValue, "available")
                 XCTAssertEqual(json["model"]?["context_window"]?.intValue, 8192)
             }
@@ -47,6 +48,7 @@ final class ServerTests: XCTestCase {
                 let json = try JSONValue(parsing: String(buffer: response.body))
                 let model = try XCTUnwrap(json["data"]?.arrayValue?.first)
                 XCTAssertEqual(model["id"]?.stringValue, "afm")
+                XCTAssertEqual(model["name"]?.stringValue, "AFM Test")
                 XCTAssertEqual(model["capabilities"], ["chat", "streaming", "structured_output", "tools"])
                 XCTAssertEqual(model["owned_by"]?.stringValue, "apple")
             }
@@ -55,7 +57,7 @@ final class ServerTests: XCTestCase {
 
     func testHealthWhenUnavailable() async throws {
         var backend = FakeBackend()
-        backend.modelStatus = ModelStatus(available: false, unavailableReason: "appleIntelligenceNotEnabled", contextWindow: 4096, capabilities: [])
+        backend.modelStatus = ModelStatus(name: "AFM Test", available: false, unavailableReason: "appleIntelligenceNotEnabled", contextWindow: 4096, capabilities: [])
         try await app(backend).test(.ahc(.http)) { client in
             try await client.execute(uri: "/health", method: .get) { response in
                 XCTAssertEqual(response.status, .ok)

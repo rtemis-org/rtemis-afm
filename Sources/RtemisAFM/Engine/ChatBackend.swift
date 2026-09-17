@@ -30,6 +30,9 @@ public enum ChatEvent: Sendable, Equatable {
 
 /// The on-device model's state, as reported to clients.
 public struct ModelStatus: Sendable, Equatable {
+    /// The framework's own name for the model variant ("AFM 3 Core
+    /// Advanced" on macOS 27.0); what the picker shows.
+    public var name: String
     public var available: Bool
     /// `deviceNotEligible`, `appleIntelligenceNotEnabled`, `modelNotReady`,
     /// or `nil` when available.
@@ -39,7 +42,8 @@ public struct ModelStatus: Sendable, Equatable {
     /// Capabilities to advertise on `/v1/models`.
     public var capabilities: [String]
 
-    public init(available: Bool, unavailableReason: String? = nil, contextWindow: Int, capabilities: [String]) {
+    public init(name: String, available: Bool, unavailableReason: String? = nil, contextWindow: Int, capabilities: [String]) {
+        self.name = name
         self.available = available
         self.unavailableReason = unavailableReason
         self.contextWindow = contextWindow

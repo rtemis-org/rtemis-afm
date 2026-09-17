@@ -168,10 +168,17 @@ reference for `TranscriptBuilder`; if Apple ever ships the forward direction
   If the minimum macOS ever changes, change the codename with it. The formula
   has no `version` line on purpose: Homebrew reads `0.1.0` from the tarball
   name, and `brew audit --strict` rejects an explicit one as redundant.
-- `scripts/afm.sh` is the source; copy it to rtemislive's `public/afm.sh` on
-  every change (the Help page links to the deployed URL).
-- Bump `Sources/RtemisAFM/Version.swift` and `CHANGELOG.md` before tagging;
-  the release workflow refuses a tag that does not match the version constant.
+- `scripts/afm.sh` is the source; `just sync-afm-sh` copies it to
+  rtemislive's `public/afm.sh` on every change (the Help page links to the
+  deployed URL), and `just check-afm-sh` says whether the two differ.
+- Changes go under `## Unreleased` in `CHANGELOG.md` as they land. `just
+  bump <version>` sets `Sources/RtemisAFM/Version.swift` and turns that
+  section into `## <version> — <date>`; the release workflow refuses a tag
+  that does not match the version constant or has no dated section, and
+  publishes the section as the release notes. `just release-check` runs the
+  workflow's steps up to the upload, including both checks. The workflow bumps the Homebrew tap from the tag; `just
+  brew-upgrade` then brings that release onto the machine, which is what a
+  launcher starting `/opt/homebrew/bin/rtemis-afm` runs.
 
 ## Known limitations (v0.1)
 

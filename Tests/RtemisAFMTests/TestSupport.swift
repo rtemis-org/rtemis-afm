@@ -57,7 +57,7 @@ struct FakeBackend: ChatBackend {
     var failure: BridgeError?
     /// Thrown after `failAfter` events have been yielded (mid-stream error).
     var failAfter: Int?
-    var modelStatus = ModelStatus(available: true, contextWindow: 8192, capabilities: ["chat", "streaming", "structured_output", "tools"])
+    var modelStatus = ModelStatus(name: "AFM Test", available: true, contextWindow: 8192, capabilities: ["chat", "streaming", "structured_output", "tools"])
 
     func status() -> ModelStatus { modelStatus }
 

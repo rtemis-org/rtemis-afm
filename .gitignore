@@ -15,5 +15,7 @@ CLAUDE.md
 
 # Swift Package Manager
 .build/
+# just release-check
+dist/
 .swiftpm/
 *.xcodeproj

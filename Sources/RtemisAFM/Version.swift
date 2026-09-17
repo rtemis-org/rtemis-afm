@@ -9,7 +9,7 @@
 /// `rtemis-afm version`. Bump it together with the git tag (`v0.1.0`).
 public enum RtemisAFM {
     /// The bridge's own version, in semantic-versioning form.
-    public static let version = "0.1.0"
+    public static let version = "0.1.1"
 
     /// The identifier under which the on-device model is served. rtemislive
     /// asks for this id; `system` is also accepted for parity with Apple's

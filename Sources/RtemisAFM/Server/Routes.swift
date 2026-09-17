@@ -25,6 +25,7 @@ enum Routes {
                 version: RtemisAFM.version,
                 model: .init(
                     id: RtemisAFM.modelID,
+                    name: status.name,
                     availability: status.available ? "available" : "unavailable",
                     reason: status.unavailableReason,
                     contextWindow: status.contextWindow
@@ -37,7 +38,7 @@ enum Routes {
         router.get("/v1/models") { _, _ in
             let status = backend.status()
             return Response.json(ModelList(data: [
-                .init(id: RtemisAFM.modelID, capabilities: status.capabilities, contextWindow: status.contextWindow)
+                .init(id: RtemisAFM.modelID, name: status.name, capabilities: status.capabilities, contextWindow: status.contextWindow)
             ]))
         }
 

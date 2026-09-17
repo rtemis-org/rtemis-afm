@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.1.0 — unreleased
+## 0.1.1 — 2026-09-17
+
+Vision: `image_url` parts on user messages (as `data:` URIs) reach the
+model, on the prompt and in the rebuilt history; `/v1/models` advertises
+`vision` when the framework reports the capability (spike check V).
+`/v1/models` and `/health` carry the variant's display name as `name`.
+
+## 0.1.0 — 2026-09-15
 
 First version: `/health`, `/v1/models`, `/v1/chat/completions` (JSON and
 SSE), tool calling with a stateless round trip, `response_format`
@@ -13,7 +20,3 @@ Open objects (`{"type": "object"}` without `properties`) in tool parameters
 and structured output are generated as JSON text and parsed back, so a
 free-form settings block can carry keys instead of always being `{}`;
 `json_object` is enforced the same way (spike check H).
-
-Vision: `image_url` parts on user messages (as `data:` URIs) reach the
-model, on the prompt and in the rebuilt history; `/v1/models` advertises
-`vision` when the framework reports the capability (spike check V).

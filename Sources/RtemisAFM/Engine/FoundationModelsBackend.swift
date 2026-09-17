@@ -51,6 +51,7 @@ public final class FoundationModelsBackend: ChatBackend {
         var capabilities = ["chat", "streaming", "structured_output", "tools"]
         if model.capabilities.contains(.vision) { capabilities.append("vision") }
         return ModelStatus(
+            name: model.variant.displayName,
             available: reason == nil,
             unavailableReason: reason,
             // 8192 on macOS 27.0 (`fm serve` agrees: 7.3k accepted, 10.9k refused).

@@ -87,7 +87,7 @@ struct Serve: AsyncParsableCommand {
         """)
         if verbose {
             print("Allowed origins: \(origins.map(describe).joined(separator: ", "))")
-            print("Model: \(status.available ? "available" : "unavailable (\(status.unavailableReason ?? "?"))"), context window \(status.contextWindow) tokens")
+            print("Model: \(status.name), \(status.available ? "available" : "unavailable (\(status.unavailableReason ?? "?"))"), context window \(status.contextWindow) tokens")
         }
 
         // Runs until SIGINT/SIGTERM, then shuts down gracefully.
@@ -122,15 +122,16 @@ struct Status: AsyncParsableCommand {
             throw ExitCode(1)
         }
         struct Health: Decodable {
-            struct Model: Decodable { var availability: String; var reason: String? }
+            struct Model: Decodable { var name: String?; var availability: String; var reason: String? }
             var version: String
             var model: Model
         }
         let health = try JSONDecoder().decode(Health.self, from: data)
+        let name = health.model.name ?? "model"
         if health.model.availability == "available" {
-            print("rtemis-afm \(health.version) is running on port \(port); model available.")
+            print("rtemis-afm \(health.version) is running on port \(port); \(name) available.")
         } else {
-            let status = ModelStatus(available: false, unavailableReason: health.model.reason, contextWindow: 0, capabilities: [])
+            let status = ModelStatus(name: name, available: false, unavailableReason: health.model.reason, contextWindow: 0, capabilities: [])
             print("rtemis-afm \(health.version) is running on port \(port), but: \(status.userMessage)")
             throw ExitCode(1)
         }

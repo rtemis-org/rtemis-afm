@@ -175,6 +175,10 @@ public struct ModelList: Encodable, Sendable {
         public var object = "model"
         public var created = 0
         public var ownedBy = "apple"
+        /// The bridge's own field: the variant's display name as the
+        /// framework reports it, for the picker. `id` stays `afm` so a
+        /// stored selection survives macOS updates that rename the model.
+        public var name: String
         /// The bridge's own field. rtemislive reads it to decide whether to
         /// offer tools; Apple's `fm serve` has no such field, which is how
         /// the app tells the two servers apart.
@@ -184,7 +188,7 @@ public struct ModelList: Encodable, Sendable {
         public var contextWindow: Int
 
         enum CodingKeys: String, CodingKey {
-            case id, object, created, capabilities
+            case id, object, created, name, capabilities
             case ownedBy = "owned_by"
             case contextWindow = "context_window"
         }
@@ -199,6 +203,7 @@ public struct HealthResponse: Encodable, Sendable {
 
     public struct Model: Encodable, Sendable {
         public var id: String
+        public var name: String
         /// `available` or `unavailable`.
         public var availability: String
         /// Present only when unavailable: `deviceNotEligible`,
@@ -207,7 +212,7 @@ public struct HealthResponse: Encodable, Sendable {
         public var contextWindow: Int?
 
         enum CodingKeys: String, CodingKey {
-            case id, availability, reason
+            case id, name, availability, reason
             case contextWindow = "context_window"
         }
     }

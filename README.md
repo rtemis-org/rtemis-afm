@@ -146,11 +146,18 @@ up from there. No session survives between requests.
 
 ### Developing
 
+A Swift package, no Xcode project; `just` lists the tasks (each is a plain
+`swift build` / `swift test` / `swift run` with the flags CI uses):
+
 ```sh
-swift build                       # debug build
-swift test                        # unit tests (no Apple Intelligence needed)
-swift run afm-spike               # framework compatibility probe (needs the model)
-swift run rtemis-afm --verbose    # run from source
+just check                        # build + unit tests, what CI runs
+just spike                        # framework compatibility probe (needs the model)
+just dev                          # serve the debug build with request logging
+just stop && just serve           # replace a running bridge with a release build from source
+just install                      # build, sign and copy to ~/.rtemis/bin, where afm.sh installs
+just bump 0.2.0                   # cut a release: Version.swift + date the Unreleased changelog section
+just release-check                # everything the release workflow does before it uploads
+just brew-upgrade                 # after a tag's workflow: update this Mac's Homebrew copy
 ```
 
 Built with Xcode 27.0 / Swift 6.4 on macOS 27.0; macOS 27 is also the
