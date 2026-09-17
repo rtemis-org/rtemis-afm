@@ -15,7 +15,7 @@ import FoundationModels
 /// | OpenAI message                    | `Transcript.Entry`                       |
 /// |-----------------------------------|------------------------------------------|
 /// | `system` / `developer` (all)      | one `.instructions`, first               |
-/// | `user`                            | `.prompt`                                |
+/// | `user` (text and image parts)     | `.prompt`                                |
 /// | `assistant` with `content`        | `.response`                              |
 /// | `assistant` with `tool_calls`     | `.toolCalls`                             |
 /// | `tool`                            | `.toolOutput`                            |
@@ -25,11 +25,17 @@ import FoundationModels
 /// message (the client returning a result) the prompt is empty and the
 /// model continues from the transcript — confirmed against macOS 27.0 by
 /// `afm-spike` (finding A).
+///
+/// Images ride on `user` messages only, as on the OpenAI wire: in the
+/// history as attachment segments of the `.prompt` entry, on the final
+/// message as `promptImages` for the engine to attach (spike check V).
 public enum TranscriptBuilder {
     /// The result of building: the history and the current prompt.
     public struct Built: Sendable {
         public var transcript: Transcript
         public var prompt: String
+        /// Images on the final `user` message, in wire order.
+        public var promptImages: [Transcript.ImageAttachment]
         /// The instructions text, as folded from the system messages.
         public var instructionsText: String
     }
@@ -68,9 +74,12 @@ public enum TranscriptBuilder {
         // The last message decides what the prompt is.
         let lastIndex = messages.indices.last!
         var prompt = ""
+        var promptImages: [Transcript.ImageAttachment] = []
         var historyEnd = messages.endIndex
         if messages[lastIndex].role == .user {
-            prompt = try text(of: messages[lastIndex])
+            let body = try resolve(messages[lastIndex])
+            prompt = body.text
+            promptImages = try body.imageURLs.map(ImageDecoder.attachment(from:))
             historyEnd = lastIndex
         }
 
@@ -82,10 +91,18 @@ public enum TranscriptBuilder {
             case .system, .developer:
                 continue  // already folded into instructions
             case .user:
-                entries.append(.prompt(.init(segments: [.text(.init(content: try text(of: message)))])))
+                let body = try resolve(message)
+                var segments: [Transcript.Segment] = []
+                if !body.text.isEmpty || body.imageURLs.isEmpty {
+                    segments.append(.text(.init(content: body.text)))
+                }
+                for url in body.imageURLs {
+                    segments.append(.attachment(.init(content: .image(try ImageDecoder.attachment(from: url)))))
+                }
+                entries.append(.prompt(.init(segments: segments)))
             case .assistant:
-                if let content = message.content {
-                    let body = try flatten(content)
+                if message.content != nil {
+                    let body = try text(of: message)
                     if !body.isEmpty {
                         entries.append(.response(.init(assetIDs: [], segments: [.text(.init(content: body))])))
                     }
@@ -119,22 +136,30 @@ public enum TranscriptBuilder {
             }
         }
 
-        return Built(transcript: Transcript(entries: entries), prompt: prompt, instructionsText: instructionsText)
+        return Built(transcript: Transcript(entries: entries), prompt: prompt, promptImages: promptImages, instructionsText: instructionsText)
     }
 
-    /// The text of a message, or a `400` if it has no text content or
-    /// carries a part type this wire cannot deliver (images).
+    /// The text of a message that may not carry images (every role but
+    /// `user`), or a `400`.
     static func text(of message: ChatMessage) throws(BridgeError) -> String {
-        guard let content = message.content else { return "" }
-        return try flatten(content)
+        let body = try resolve(message)
+        guard body.imageURLs.isEmpty else {
+            throw .invalidRequest("image_url parts are accepted in user messages only", code: "invalid_messages")
+        }
+        return body.text
     }
 
-    static func flatten(_ content: ChatMessage.Content) throws(BridgeError) -> String {
-        switch content.flattenedText() {
-        case .success(let text):
-            return text
-        case .failure(let part):
-            throw .unsupported("message content part \"\(part.type)\" is not supported; this bridge is text-only (no vision)")
+    /// A message's text and image URLs, or a `400` naming the part this
+    /// wire cannot deliver.
+    static func resolve(_ message: ChatMessage) throws(BridgeError) -> ChatMessage.Content.Resolved {
+        guard let content = message.content else { return .init(text: "", imageURLs: []) }
+        switch content.resolved() {
+        case .success(let body):
+            return body
+        case .failure(.unsupported(let type)):
+            throw .unsupported("message content part \"\(type)\" is not supported; this wire carries text and image_url parts")
+        case .failure(.malformed(let type)):
+            throw .invalidRequest("message content part \"\(type)\" is missing its \(type) payload", code: "invalid_messages")
         }
     }
 }

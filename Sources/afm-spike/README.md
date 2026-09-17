@@ -33,6 +33,7 @@ every check passes.
 | F3 | The same overflow with a tool attached arrives as `GenerativeError`, a type the public interface does not declare, with the message "Provided N tokens, but the maximum allowed is M." | `ErrorMapper` matches that message so the client gets `400 context_length_exceeded` either way. If this check prints `LanguageModelError`, the framework was fixed and the message match can go. |
 | G | Task cancellation stops generation quickly. | Cancel-on-disconnect. |
 | H | An open object (`{"type": "object"}` with no `properties`) cannot be generated as structured output: with the framework's free-form `GeneratedContent.generationSchema` the macOS 27.0 model emits `{}` or the constrained decoder doubles the key quotes and fails. Asked for the object as JSON *text* in a string, it writes valid JSON every time. | `OpenValue` / `SchemaConverter`: open objects go on the wire as strings with a hint and are parsed back in the engine. If this check reports that free-form works too, the detour can go. |
+| V | The model reports `.vision`, and sees an image attached to the prompt (`Attachment(cgImage)`) and one in a rebuilt transcript (`Transcript.Segment.attachment`); the bridge's own `ImageDecoder` turns a data URI into the attachment. | `capabilities` on `/v1/models` includes `vision`; `TranscriptBuilder` and `FoundationModelsBackend.prompt`. If this fails, the bridge must stop advertising `vision` (rtemislive hides the attach button off that field). |
 
 ## Findings on record
 
@@ -54,6 +55,23 @@ same model cut the text at the value's opening quote (`{"algorithm":`),
 and it did the same in longer conversations: the detour makes an open
 object *possible* on this model, not reliable. That is why rtemislive keeps
 the 8k model out of Study mode rather than compacting Study to fit it.
+
+**macOS 27.0 (26A428), Xcode 27.0 — 2026-09-17:** check V added and
+passing: the on-device model answers about an image both on the prompt and
+from the transcript, reading the word drawn in it. An image costs a bounded
+number of input tokens whatever its pixel size — the framework downsamples:
+147 for a square image of 384px or more, 131 for 16:9 (1920×1080 and
+3840×2160 alike), 99 for 4:1, 67 at 256px, 19 at 128px — and the cost is
+linear in the number of images (two squares: 294). Measured with the same
+prompt with and without the attachment; `Attachment(imageURL:)` and
+`Attachment(cgImage)` cost the same. Also probed:
+`PrivateCloudComputeLanguageModel()` reports available, `contextSize`
+32,768 and every capability including reasoning, but `respond` fails with
+`ModelManagerError 1046` from an ad-hoc-signed binary — its use needs the
+managed Private Cloud Compute entitlement, which Apple grants to App Store
+Small Business Program members for App Store distribution only
+(developer.apple.com/private-cloud-compute). Not reachable from a
+curl-installed CLI; see `~/Code/spec/rtemis-afm/decisions.md`.
 
 ## Reading the SDK interface
 

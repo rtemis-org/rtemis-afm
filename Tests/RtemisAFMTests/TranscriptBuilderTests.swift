@@ -81,13 +81,70 @@ final class TranscriptBuilderTests: XCTestCase {
         XCTAssertEqual(try TranscriptBuilder.build(messages: messages).prompt, "a\nb")
     }
 
-    func testImagePartIsRejected() {
+    func testImagesRideOnUserMessages() throws {
+        let image = ChatMessage.Content.Part(type: "image_url", imageURL: .init(url: onePixelPNG, detail: "auto"))
         let messages: [ChatMessage] = [
-            .init(role: .user, content: .parts([.init(type: "image_url")]))
+            .init(role: .user, content: .parts([.init(type: "text", text: "Here is a plot."), image])),
+            .init(role: .assistant, content: .text("I see it.")),
+            .init(role: .user, content: .parts([image, .init(type: "text", text: "And another?")])),
+        ]
+        let built = try TranscriptBuilder.build(messages: messages)
+        XCTAssertEqual(built.prompt, "And another?")
+        XCTAssertEqual(built.promptImages.count, 1)
+        XCTAssertEqual(built.promptImages.first?.cgImage.width, 1)
+        guard case .prompt(let history) = built.transcript[0] else { return XCTFail("expected prompt") }
+        XCTAssertEqual(history.segments.count, 2)
+        guard case .attachment(let segment) = history.segments[1], case .image(let attachment) = segment.content else {
+            return XCTFail("expected an image attachment after the text")
+        }
+        XCTAssertEqual(attachment.cgImage.height, 1)
+    }
+
+    func testImageOnlyUserMessageHasNoEmptyTextSegment() throws {
+        let image = ChatMessage.Content.Part(type: "image_url", imageURL: .init(url: onePixelPNG))
+        let built = try TranscriptBuilder.build(messages: [
+            .init(role: .user, content: .parts([image])),
+            .init(role: .assistant, content: .text("A pixel.")),
+            .init(role: .user, content: .text("Color?")),
+        ])
+        guard case .prompt(let history) = built.transcript[0] else { return XCTFail("expected prompt") }
+        XCTAssertEqual(history.segments.count, 1)
+        if case .text = history.segments[0] { XCTFail("expected only the attachment") }
+    }
+
+    func testImagesAreRefusedOutsideUserMessages() {
+        let image = ChatMessage.Content.Part(type: "image_url", imageURL: .init(url: onePixelPNG))
+        for role in [ChatMessage.Role.system, .assistant] {
+            XCTAssertThrowsError(try TranscriptBuilder.build(messages: [
+                .init(role: role, content: .parts([image])),
+                .init(role: .user, content: .text("x")),
+            ]), "\(role)") { error in
+                XCTAssertEqual((error as? BridgeError)?.status, 400)
+                XCTAssertEqual((error as? BridgeError)?.code, "invalid_messages")
+            }
+        }
+    }
+
+    func testRemoteImageIsUnsupported() {
+        let messages: [ChatMessage] = [
+            .init(role: .user, content: .parts([.init(type: "image_url", imageURL: .init(url: "https://example.org/a.png"))]))
         ]
         XCTAssertThrowsError(try TranscriptBuilder.build(messages: messages)) { error in
             XCTAssertEqual((error as? BridgeError)?.status, 400)
             XCTAssertEqual((error as? BridgeError)?.code, "unsupported")
+        }
+    }
+
+    func testUnknownAndMalformedPartsAreRejected() {
+        XCTAssertThrowsError(try TranscriptBuilder.build(messages: [
+            .init(role: .user, content: .parts([.init(type: "input_audio")]))
+        ])) { error in
+            XCTAssertEqual((error as? BridgeError)?.code, "unsupported")
+        }
+        XCTAssertThrowsError(try TranscriptBuilder.build(messages: [
+            .init(role: .user, content: .parts([.init(type: "image_url")]))
+        ])) { error in
+            XCTAssertEqual((error as? BridgeError)?.code, "invalid_messages")
         }
     }
 

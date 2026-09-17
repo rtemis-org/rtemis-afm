@@ -81,10 +81,10 @@ public struct ChatMessage: Decodable, Sendable, Equatable {
         self.toolCallID = toolCallID
     }
 
-    /// Message content: plain text or a list of parts. The on-device model is
-    /// reached over a text-only wire here, so the only part type the bridge
-    /// consumes is `text`; anything else (e.g. `image_url`) is reported so the
-    /// caller can be told "no vision on this wire".
+    /// Message content: plain text or a list of parts. The parts the bridge
+    /// consumes are `text` and `image_url` (the model on macOS 27 can see);
+    /// anything else (`input_audio`, `video_url`, …) is reported so the
+    /// caller can be told what this wire does not carry.
     public enum Content: Decodable, Sendable, Equatable {
         case text(String)
         case parts([Part])
@@ -92,9 +92,30 @@ public struct ChatMessage: Decodable, Sendable, Equatable {
         public struct Part: Decodable, Sendable, Equatable {
             public var type: String
             public var text: String?
-            public init(type: String, text: String? = nil) {
+            public var imageURL: ImageURL?
+
+            enum CodingKeys: String, CodingKey {
+                case type, text
+                case imageURL = "image_url"
+            }
+
+            public init(type: String, text: String? = nil, imageURL: ImageURL? = nil) {
                 self.type = type
                 self.text = text
+                self.imageURL = imageURL
+            }
+        }
+
+        /// `image_url: { url, detail }`. `url` is a `data:` URI from a client
+        /// that uploaded the image (what the AI SDK sends) or an `http(s)`
+        /// address; `detail` is OpenAI's resolution hint, decoded so it is
+        /// visible, ignored because the framework sizes images itself.
+        public struct ImageURL: Decodable, Sendable, Equatable {
+            public var url: String
+            public var detail: String?
+            public init(url: String, detail: String? = nil) {
+                self.url = url
+                self.detail = detail
             }
         }
 
@@ -107,28 +128,46 @@ public struct ChatMessage: Decodable, Sendable, Equatable {
             }
         }
 
-        /// Every text part joined, or `nil` if a non-text part is present.
-        /// Returns the offending part type in that case so the error can
-        /// name it.
-        public func flattenedText() -> Result<String, UnsupportedPart> {
+        /// The content split into what the bridge delivers: the text parts
+        /// joined, and the image parts' URLs in order. A part of any other
+        /// type, or one missing its payload, fails with its type so the
+        /// error can name it.
+        public func resolved() -> Result<Resolved, PartError> {
             switch self {
             case .text(let s):
-                return .success(s)
+                return .success(Resolved(text: s, imageURLs: []))
             case .parts(let parts):
-                var out: [String] = []
+                var text: [String] = []
+                var images: [String] = []
                 for part in parts {
-                    guard part.type == "text", let text = part.text else {
-                        return .failure(UnsupportedPart(type: part.type))
+                    switch part.type {
+                    case "text":
+                        guard let body = part.text else { return .failure(.malformed(type: part.type)) }
+                        text.append(body)
+                    case "image_url":
+                        guard let image = part.imageURL else { return .failure(.malformed(type: part.type)) }
+                        images.append(image.url)
+                    default:
+                        return .failure(.unsupported(type: part.type))
                     }
-                    out.append(text)
                 }
-                return .success(out.joined(separator: "\n"))
+                return .success(Resolved(text: text.joined(separator: "\n"), imageURLs: images))
             }
         }
 
-        public struct UnsupportedPart: Error, Equatable {
-            public let type: String
+        public struct Resolved: Equatable, Sendable {
+            public var text: String
+            public var imageURLs: [String]
         }
+
+        public enum PartError: Error, Equatable {
+            /// A part type this wire does not carry.
+            case unsupported(type: String)
+            /// A known type without its payload (`text` without `text`,
+            /// `image_url` without `image_url`).
+            case malformed(type: String)
+        }
+
     }
 
     /// A tool call the assistant made earlier in the conversation.

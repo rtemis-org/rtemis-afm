@@ -45,10 +45,11 @@ public final class FoundationModelsBackend: ChatBackend {
             @unknown default: reason = "unknown"
             }
         }
-        // The macOS 27 model can also see images (`model.capabilities`
-        // contains `.vision`), but this wire does not carry them (see
-        // `TranscriptBuilder`), so only what is actually served is advertised.
-        let capabilities = ["chat", "streaming", "structured_output", "tools"]
+        // `vision` is advertised only when the framework reports it, and
+        // rtemislive shows the attach button only then; the on-device model
+        // on macOS 27.0 does (spike check V).
+        var capabilities = ["chat", "streaming", "structured_output", "tools"]
+        if model.capabilities.contains(.vision) { capabilities.append("vision") }
         return ModelStatus(
             available: reason == nil,
             unavailableReason: reason,
@@ -89,6 +90,11 @@ public final class FoundationModelsBackend: ChatBackend {
         guard status.available else {
             throw BridgeError.modelUnavailable(status.userMessage)
         }
+        // Said here rather than left to the framework, whose
+        // `unsupportedCapability` would arrive only once generation starts.
+        if prepared.hasImages, !model.capabilities.contains(.vision) {
+            throw BridgeError.unsupported("this model cannot see images")
+        }
 
         let session = LanguageModelSession(model: model, tools: prepared.tools, transcript: prepared.transcript)
         // Keep the entries generated before an error. This is what lets the
@@ -98,6 +104,7 @@ public final class FoundationModelsBackend: ChatBackend {
 
         var producedText = ""
         var usage: Usage?
+        let prompt = Self.prompt(prepared)
 
         do {
             if let schema = prepared.responseSchema {
@@ -106,7 +113,7 @@ public final class FoundationModelsBackend: ChatBackend {
                 // so they cannot be streamed as deltas; the finished object
                 // is sent once.
                 var final: GeneratedContent?
-                for try await snapshot in session.streamResponse(to: prepared.prompt, schema: schema, options: prepared.options) {
+                for try await snapshot in session.streamResponse(to: prompt, schema: schema, options: prepared.options) {
                     final = snapshot.rawContent
                     usage = Self.usage(from: snapshot.usage)
                 }
@@ -120,7 +127,7 @@ public final class FoundationModelsBackend: ChatBackend {
                 // common-prefix computation also copes, as well as anything
                 // can, with a snapshot that rewrote earlier text: the new
                 // tail is sent and the old head stays as the client has it.
-                for try await snapshot in session.streamResponse(to: prepared.prompt, options: prepared.options) {
+                for try await snapshot in session.streamResponse(to: prompt, options: prepared.options) {
                     let full = snapshot.content
                     let shared = full.commonPrefix(with: producedText).count
                     if shared < full.count {
@@ -160,6 +167,18 @@ public final class FoundationModelsBackend: ChatBackend {
             reason = .stop
         }
         continuation.yield(.finished(reason, finalUsage))
+    }
+
+    // MARK: - Prompt
+
+    /// The turn's prompt: its text, then its images. A transcript
+    /// attachment and a prompt attachment are two types for one thing, so
+    /// the image is handed over as the `CGImage` it was decoded to.
+    private static func prompt(_ prepared: PreparedChat) -> Prompt {
+        Prompt {
+            prepared.prompt
+            prepared.promptImages.map { Attachment($0.cgImage, orientation: $0.orientation) }
+        }
     }
 
     // MARK: - Tool calls

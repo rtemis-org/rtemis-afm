@@ -82,21 +82,30 @@ a release changes that, the fallback is the single intercepted call.
 functions rely on.
 
 **Context window.** `SystemLanguageModel.contextSize` reports 8192 on
-macOS 27.0. If Apple raises it (or exposes a larger variant —
-`SystemLanguageModel.Variant` exists now), `/v1/models` picks it up
-automatically. rtemislive reads `context_window` from there and keeps a
+macOS 27.0 (re-checked 2026-09-17 on 26A428; the only on-device variant is
+`.core3`, "AFM 3 Core Advanced"). If Apple raises it, `/v1/models` picks it
+up automatically. rtemislive reads `context_window` from there and keeps a
 model below 32k out of Study mode (Chat is unaffected); a larger on-device
-model passes that gate with no change on either side. The 32k figure comes
+model passes that gate with no change on either side. The larger model
+Apple does ship, `PrivateCloudComputeLanguageModel` (32,768 tokens, vision,
+tools, reasoning), is not an option for this bridge: it needs a managed
+entitlement Apple grants for App Store distribution only, and an
+ad-hoc-signed binary gets `ModelManagerError 1046` (spike README,
+2026-09-17). The 32k figure comes
 from measuring a Study round trip on this bridge (~15k tokens with the full
 tool set), and the 8k model was also tried with compacted schemas and
 digested tool results: a 3B model still could not fill a config through
 them reliably, which is why the app gates rather than compacts.
 
-**Vision.** The macOS 27 model accepts image attachments
-(`Transcript.Segment.attachment`). The bridge rejects `image_url` parts with
-`400` and does not advertise `vision`; adding it means decoding data URLs
-into `Transcript.ImageAttachment` in `TranscriptBuilder` and adding
-`"vision"` to `capabilities` (rtemislive keys `supportsVision` off that).
+**Vision.** The macOS 27 model accepts image attachments, and the bridge
+carries them: `image_url` parts on `user` messages are decoded from their
+`data:` URI by `ImageDecoder` into `Transcript.ImageAttachment` — into the
+`.prompt` entry's segments for history, onto the `Prompt` for the final
+message (`FoundationModelsBackend.prompt`). `vision` is advertised on
+`/v1/models` when `model.capabilities` reports it, and rtemislive shows the
+attach button off that field. Remote (`http`) image URLs are `400
+unsupported`: the bridge does not fetch on the page's behalf. An image costs
+at most 147 input tokens whatever its size (spike check V has the table).
 
 **Reasoning.** `Transcript.Entry.reasoning` and
 `ContextOptions.reasoningLevel` exist for models that reason
@@ -166,7 +175,8 @@ reference for `TranscriptBuilder`; if Apple ever ships the forward direction
 
 ## Known limitations (v0.1)
 
-- Text only: no images in either direction.
+- Images in, not out: the model cannot generate one, and only `data:` URIs
+  are accepted.
 - `json_object` is enforced by generating one string and parsing it; if the
   model writes something that is not a JSON object, that text is returned
   as it was written.

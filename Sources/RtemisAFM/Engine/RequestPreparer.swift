@@ -10,6 +10,8 @@ import FoundationModels
 public struct PreparedChat: Sendable {
     public var transcript: Transcript
     public var prompt: String
+    /// Images attached to the prompt, in wire order.
+    public var promptImages: [Transcript.ImageAttachment]
     public var tools: [BridgeTool]
     public var options: GenerationOptions
     /// Set for `response_format: json_schema` and `json_object`; the model
@@ -23,6 +25,17 @@ public struct PreparedChat: Sendable {
     public var warnings: [String]
     /// Text of the instructions, for logging and diagnostics.
     public var instructionsText: String
+
+    /// Whether the model is asked to look at an image anywhere — on the
+    /// prompt or earlier in the conversation.
+    public var hasImages: Bool {
+        !promptImages.isEmpty || transcript.contains { entry in
+            if case .prompt(let prompt) = entry {
+                return prompt.segments.contains { if case .attachment = $0 { true } else { false } }
+            }
+            return false
+        }
+    }
 }
 
 /// Validates a wire request and converts it into a `PreparedChat`.
@@ -119,6 +132,7 @@ public enum RequestPreparer {
         return PreparedChat(
             transcript: built.transcript,
             prompt: built.prompt,
+            promptImages: built.promptImages,
             tools: tools,
             options: options,
             responseSchema: responseSchema,

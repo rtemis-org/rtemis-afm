@@ -36,6 +36,19 @@ final class WireEncodingTests: XCTestCase {
         XCTAssertEqual(String(buffer: SSE.done), "data: [DONE]\n\n")
     }
 
+    func testImagePartsDecode() throws {
+        let request = try decodeRequest("""
+        { "model": "afm", "messages": [ { "role": "user", "content": [
+            { "type": "text", "text": "What is this?" },
+            { "type": "image_url", "image_url": { "url": "data:image/png;base64,AAAA", "detail": "low" } }
+        ] } ] }
+        """)
+        let resolved = try XCTUnwrap(request.messages[0].content).resolved()
+        XCTAssertEqual(try resolved.get(), .init(text: "What is this?", imageURLs: ["data:image/png;base64,AAAA"]))
+        guard case .parts(let parts) = request.messages[0].content else { return XCTFail("expected parts") }
+        XCTAssertEqual(parts[1].imageURL?.detail, "low")
+    }
+
     func testErrorEnvelope() throws {
         let data = try JSONEncoder.wire.encode(BridgeError.modelNotFound("x").response)
         let json = try JSONDecoder().decode(JSONValue.self, from: data)

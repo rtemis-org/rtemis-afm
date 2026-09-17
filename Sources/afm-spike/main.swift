@@ -13,8 +13,10 @@
 // `Sources/afm-spike/README.md`. A check that reports FAIL means the bridge
 // needs a code change before it can be trusted on that OS version.
 
+import CoreText
 import Foundation
 import FoundationModels
+import ImageIO
 import RtemisAFM
 
 // MARK: - Helpers
@@ -322,6 +324,70 @@ await check("H", "An open object is best generated as JSON text (free-form Gener
         return "free-form works now too — consider mapping open objects to GeneratedContent.generationSchema instead (see OpenValues.swift)"
     }
     return "JSON text 3/3; free-form does not (as expected on macOS 27.0)"
+}
+
+// MARK: - V. Vision
+
+// A red disc on white with the word "rtemis" under it, drawn here so the
+// check needs no fixture; the model is asked for both the color and the
+// word. Goes through the bridge's own decoder from a data URI, as a request
+// would, so the whole path is exercised.
+func testImageDataURI() throws -> String {
+    let size = 256
+    let context = CGContext(
+        data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    )!
+    context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: size, height: size))
+    context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+    context.fillEllipse(in: CGRect(x: 48, y: 80, width: 160, height: 160))
+    let text = CTLineCreateWithAttributedString(NSAttributedString(
+        string: "rtemis",
+        attributes: [
+            kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica-Bold" as CFString, 32, nil),
+            kCTForegroundColorAttributeName as NSAttributedString.Key: CGColor(red: 0, green: 0, blue: 0, alpha: 1),
+        ]
+    ))
+    context.textPosition = CGPoint(x: 72, y: 28)
+    CTLineDraw(text, context)
+    let data = NSMutableData()
+    let destination = CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil)!
+    CGImageDestinationAddImage(destination, context.makeImage()!, nil)
+    CGImageDestinationFinalize(destination)
+    return "data:image/png;base64," + (data as Data).base64EncodedString()
+}
+
+await check("V", "The model sees an image attached to the prompt and one in the transcript, and reports the vision capability") {
+    guard model.capabilities.contains(.vision) else { throw SpikeFailure("capabilities lack .vision") }
+    let image = try ImageDecoder.attachment(from: try testImageDataURI())
+
+    // On the prompt, as the engine attaches the final user message's images.
+    let session = LanguageModelSession(model: model, instructions: "Describe images in one sentence.")
+    let onPrompt = try await session.respond(to: Prompt {
+        "What color is the shape, and what word is written under it?"
+        Attachment(image.cgImage, orientation: image.orientation)
+    })
+    let promptTokens = onPrompt.usage.input.totalTokenCount
+
+    // In the transcript, as an earlier user message is rebuilt.
+    let entries: [Transcript.Entry] = [
+        .instructions(.init(segments: [.text(.init(content: "Describe images in one sentence."))], toolDefinitions: [])),
+        .prompt(.init(segments: [.text(.init(content: "Here is an image.")), .attachment(.init(content: .image(image)))])),
+        .response(.init(assetIDs: [], segments: [.text(.init(content: "Got it."))])),
+    ]
+    let continued = LanguageModelSession(model: model, transcript: Transcript(entries: entries))
+    let inHistory = try await continued.respond(to: "What color was the shape in the image I sent, and what word was under it?")
+
+    let text = LanguageModelSession(model: model, instructions: "Describe images in one sentence.")
+    let textOnly = try await text.respond(to: "What color is the shape, and what word is written under it?")
+    let imageCost = promptTokens - textOnly.usage.input.totalTokenCount
+
+    for (label, answer) in [("prompt", onPrompt.content), ("transcript", inHistory.content)] {
+        let lower = answer.lowercased()
+        guard lower.contains("red"), lower.contains("rtemis") else { throw SpikeFailure("\(label): \"\(answer)\"") }
+    }
+    return "prompt: \"\(onPrompt.content)\"; transcript: \"\(inHistory.content)\"; the image cost \(imageCost) input tokens"
 }
 
 // MARK: - Summary
