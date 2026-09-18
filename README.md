@@ -23,7 +23,7 @@ curl -fsSL https://live.rtemis.org/afm.sh | sh
 
 That downloads the latest release, verifies its checksum, installs it to
 `~/.rtemis/bin/rtemis-afm` and starts it. Next time, run `rtemis-afm`. Leave
-the Terminal window open while you chat, and pick **Apple Intelligence** in
+the Terminal window open while you chat, and pick **Apple** in
 rtemislive's chat provider menu. (The script's source is
 [`scripts/afm.sh`](scripts/afm.sh).)
 

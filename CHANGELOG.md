@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+The provider is "Apple" in rtemislive; the banner and the Homebrew caveats
+say so.
+
 ## 0.1.1 — 2026-09-17
 
 Vision: `image_url` parts on user messages (as `data:` URIs) reach the

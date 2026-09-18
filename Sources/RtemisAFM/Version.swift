@@ -20,6 +20,6 @@ public enum RtemisAFM {
     public static let acceptedModelIDs: Set<String> = [modelID, "system"]
 
     /// The port the bridge listens on unless `--port` says otherwise.
-    /// rtemislive's Apple Intelligence provider defaults to the same value.
+    /// rtemislive's Apple provider defaults to the same value.
     public static let defaultPort = 1977
 }

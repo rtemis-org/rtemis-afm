@@ -27,7 +27,7 @@ class RtemisAfm < Formula
     <<~EOS
       Start the bridge with:
         rtemis-afm
-      then pick "Apple Intelligence" in rtemislive (https://live.rtemis.org).
+      then pick "Apple" in rtemislive (https://live.rtemis.org).
       Apple Intelligence must be turned on in System Settings.
     EOS
   end

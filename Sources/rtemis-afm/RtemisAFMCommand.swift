@@ -83,7 +83,7 @@ struct Serve: AsyncParsableCommand {
         print("""
         rtemis-afm \(RtemisAFM.version) — Apple Foundation Model bridge
         Listening on http://localhost:\(port) for https://live.rtemis.org
-        Go back to rtemislive and pick Apple Intelligence. Ctrl-C to stop.
+        Go back to rtemislive and pick Apple. Ctrl-C to stop.
         """)
         if verbose {
             print("Allowed origins: \(origins.map(describe).joined(separator: ", "))")
