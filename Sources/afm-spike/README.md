@@ -1,8 +1,8 @@
 # afm-spike — compatibility probe
 
 `afm-spike` checks, against the real on-device model, the FoundationModels
-behaviors that `rtemis-afm` is built on. It is the milestone-0 spike from the
-implementation spec, kept as a program so it can be re-run.
+behaviors that `rtemis-afm` is built on. It is kept as a standalone program
+so these checks can be re-run.
 
 ```sh
 swift run afm-spike
@@ -21,7 +21,7 @@ every check passes.
 
 | Check | Assumption | Where it matters |
 |---|---|---|
-| A | A `Transcript` built by the client from `.instructions` / `.prompt` / `.toolCalls` / `.toolOutput` entries is accepted, and `respond(to: "")` continues from a trailing tool result. | `TranscriptBuilder`; the stateless tool loop. If this fails, fall back to the per-conversation session registry described in the spec. |
+| A | A `Transcript` built by the client from `.instructions` / `.prompt` / `.toolCalls` / `.toolOutput` entries is accepted, and `respond(to: "")` continues from a trailing tool result. | `TranscriptBuilder`; the stateless tool loop. If this fails, the bridge would need to retain a model session for each conversation. |
 | A2 | Prior `.response` entries are used as history. | Multi-turn chat. |
 | B | Throwing from `Tool.call(arguments:)` surfaces the arguments the model produced, wrapped in `ToolCallError`. With `.preserveTranscript` the session keeps the `.toolCalls` entry. | `BridgeTool`; `FoundationModelsBackend.toolCalls(from:)` reads all parallel calls from the transcript. |
 | C, C2 | rtemislive's real tool schemas convert through `SchemaConverter` and the model fills them. | Tools in rtemislive. The fixture is `Tests/RtemisAFMTests/Fixtures/rtemis-tools.json`; regenerate it when the published `supervised/v1` schema changes. |
@@ -71,7 +71,7 @@ prompt with and without the attachment; `Attachment(imageURL:)` and
 managed Private Cloud Compute entitlement, which Apple grants to App Store
 Small Business Program members for App Store distribution only
 (developer.apple.com/private-cloud-compute). Not reachable from a
-curl-installed CLI; see `~/Code/spec/rtemis-afm/decisions.md`.
+curl-installed CLI.
 
 ## Reading the SDK interface
 
